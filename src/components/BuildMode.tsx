@@ -4,6 +4,7 @@ import { parseDeck } from '../lib/import';
 import { displayName } from '../lib/dataset';
 import { deckNeeds } from '../lib/setFinder';
 import { CardSearch } from './CardSearch';
+import { DeckView } from './DeckView';
 import { Scanner } from './Scanner';
 import type { Collection } from '../lib/collection';
 import type { Card, Database } from '../lib/types';
@@ -71,6 +72,8 @@ export function BuildMode({ saved, db, collection, onOwnedChange, onBack }: Prop
       </section>
 
       {scanning && <Scanner db={db} onCard={addCard} onClose={() => setScanning(false)} />}
+
+      <DeckView deck={deck} collection={collection} showOwnership />
 
       <section className="panel">
         <h2>Fehlt noch</h2>

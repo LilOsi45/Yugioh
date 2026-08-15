@@ -4,6 +4,7 @@ import {
   addDeck,
   applyScannedCard,
   deckProgress,
+  deckSlots,
   parseLibrary,
   removeDeck,
   renameDeck,
@@ -317,5 +318,39 @@ describe('adaptiveThreshold', () => {
 
   it('handles an empty image', () => {
     expect(adaptiveThreshold(new Float64Array(0), 0, 0)).toHaveLength(0);
+  });
+});
+
+describe('deckSlots', () => {
+  const mixed = parseYdk('#main\n14558127\n14558127\n14558127\n#extra\n10443957\n!side\n14558127\n', db);
+
+  it('makes one tile per physical copy', () => {
+    const slots = deckSlots(mixed);
+    expect(slots.main).toHaveLength(3);
+    expect(slots.extra).toHaveLength(1);
+    expect(slots.side).toHaveLength(1);
+    expect(slots.main.every((slot) => slot.card.name === 'Ash Blossom & Joyous Spring')).toBe(true);
+  });
+
+  it('marks nothing as owned for an empty collection', () => {
+    expect(deckSlots(mixed).main.every((slot) => !slot.owned)).toBe(true);
+  });
+
+  it('fills the main deck before the side deck', () => {
+    // Two copies owned, four wanted across main and side.
+    const slots = deckSlots(mixed, new Map([[14558127, 2]]));
+    expect(slots.main.map((slot) => slot.owned)).toEqual([true, true, false]);
+    expect(slots.side.map((slot) => slot.owned)).toEqual([false]);
+  });
+
+  it('marks every copy owned once the collection covers them all', () => {
+    const slots = deckSlots(mixed, new Map([[14558127, 4], [10443957, 1]]));
+    expect(slots.main.every((slot) => slot.owned)).toBe(true);
+    expect(slots.extra[0]?.owned).toBe(true);
+    expect(slots.side[0]?.owned).toBe(true);
+  });
+
+  it('returns empty sections for an empty deck', () => {
+    expect(deckSlots(parseYdk('', db))).toEqual({ main: [], extra: [], side: [] });
   });
 });
