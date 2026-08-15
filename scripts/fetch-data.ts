@@ -61,19 +61,32 @@ function reportOnData(index: RawDatabase): void {
     if (classifyAvailability(tcgDate || null) === 'upcoming') upcoming += 1;
   }
 
-  const byCode = new Map(index.sets.map(([, code, numOfCards]) => [code, { code, numOfCards }]));
-  const checks = SPOT_CHECKS.map(([code, expected]) => {
-    const set = byCode.get(code);
-    if (!set) return `    ${code}: not in this dump`;
-    const actual = classifyProduct(set.code, set.numOfCards);
-    return `    ${code}: ${actual}${actual === expected ? '' : ` — EXPECTED ${expected}`}`;
+  // Several sets can share a code (a set and its anniversary reprint both use
+  // LOB-EN###), so list every one of them rather than letting the last silently win.
+  const checks = SPOT_CHECKS.flatMap(([code, expected]) => {
+    const matches = index.sets.filter(([, setCode]) => setCode === code);
+    if (matches.length === 0) return [`    ${code}: not in this dump`];
+    return matches.map(([name, setCode, numOfCards]) => {
+      const actual = classifyProduct(setCode, numOfCards);
+      const verdict = actual === expected ? '' : ` — EXPECTED ${expected}`;
+      return `    ${code}: ${actual}${verdict} (${numOfCards} cards, "${name}")`;
+    });
   });
+
+  // A big set filed as a promo is the signature of the size-based fallback rule
+  // swallowing something it should not.
+  const suspicious = index.sets
+    .filter(([, code, numOfCards]) => classifyProduct(code, numOfCards) === 'promo')
+    .sort((a, b) => b[2] - a[2])
+    .slice(0, 10)
+    .map(([name, code, numOfCards]) => `    ${code}: ${numOfCards} cards, "${name}"`);
 
   process.stdout.write(
     `  set products: ${[...counts].map(([product, count]) => `${product}=${count}`).join(', ')}\n` +
       // The reprint radar has nothing to show if this is zero.
       `  sets not yet released: ${upcoming}\n` +
-      `  spot checks:\n${checks.join('\n')}\n`,
+      `  spot checks:\n${checks.join('\n')}\n` +
+      `  largest sets classified as promo:\n${suspicious.join('\n')}\n`,
   );
 }
 
