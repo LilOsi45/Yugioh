@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildIndex, setCodeFromCardNumber, type ApiCard, type ApiSet } from '../src/lib/buildIndex';
 import { decodeDatabase } from '../src/lib/dataset';
+import { classifyProduct } from '../src/lib/setClassification';
 import { normalizeName } from '../src/lib/normalize';
 import { cardNamed, miniDatabase, NOW, setNamed } from './helpers';
 import fixture from './fixtures/mini-db.json';
@@ -27,6 +28,35 @@ describe('normalizeName', () => {
 
   it('strips accents', () => {
     expect(normalizeName('Ménage')).toBe('menage');
+  });
+});
+
+describe('classifyProduct', () => {
+  it('reads the product out of the set name when the code says nothing', () => {
+    // Both were filed as promos by the code-only rules, which kept them out of the
+    // buying plan even though they are fixed-content products you can just buy.
+    expect(classifyProduct('Egyptian God Deck: Slifer the Sky Dragon', 'EGS1', 38)).toBe('boxset');
+    expect(classifyProduct('Noble Knights of the Round Table Box Set', 'NKRT', 38)).toBe('boxset');
+    expect(classifyProduct('Egyptian God Deck: Obelisk the Tormentor', 'EGO1', 35)).toBe('boxset');
+  });
+
+  it('still recognises the regular families', () => {
+    expect(classifyProduct('Structure Deck: The Crimson King', 'SDCK', 49)).toBe('structure');
+    expect(classifyProduct('Starter Deck: Codebreaker', 'YS18', 45)).toBe('boxset');
+    expect(classifyProduct('Legend of Blue Eyes White Dragon', 'LOB', 355)).toBe('booster');
+    expect(classifyProduct('25th Anniversary Tin: Dueling Mirrors', 'MP24', 398)).toBe('tin');
+    expect(classifyProduct('OTS Tournament Pack 27', 'OP27', 27)).toBe('promo');
+  });
+
+  it('falls back to size when neither name nor code is conclusive', () => {
+    expect(classifyProduct('Some New Booster', 'ZZZZ', 100)).toBe('booster');
+    expect(classifyProduct('Some Tiny Promo Thing', 'ZZZZ', 5)).toBe('promo');
+    expect(classifyProduct('Nameless', '', 0)).toBe('unknown');
+  });
+
+  it('is not fooled by a card-shaped name inside a set name', () => {
+    // "Deck" alone must not imply a fixed product.
+    expect(classifyProduct('Duelist Pack: Battle City', 'DPBC', 60)).toBe('booster');
   });
 });
 

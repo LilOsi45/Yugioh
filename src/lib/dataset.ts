@@ -23,7 +23,7 @@ export function decodeDatabase(raw: RawDatabase): Database {
   }
 
   const sets: SetInfo[] = raw.sets.map(([name, code, numOfCards, tcgDate], index) => {
-    const product = classifyProduct(code, numOfCards);
+    const product = classifyProduct(name, code, numOfCards);
     return {
       index,
       name,

@@ -64,12 +64,37 @@ function matchesAny(code: string, prefixes: string[]): boolean {
   return prefixes.some((prefix) => upper.startsWith(prefix));
 }
 
-export function classifyProduct(setCode: string, numOfCards: number): ProductClass {
+/**
+ * Set names say what the product is far more reliably than its code does — "Noble
+ * Knights of the Round Table Box Set" and "Egyptian God Deck: Slifer the Sky
+ * Dragon" have codes (NKRT, EGS1) that match no prefix family, but their names are
+ * unambiguous. Checked before the code prefixes for exactly that reason.
+ */
+const NAME_RULES: [RegExp, ProductClass][] = [
+  [/\bstructure deck\b/i, 'structure'],
+  [/\bstarter deck\b/i, 'boxset'],
+  [/\bbox set\b/i, 'boxset'],
+  [/\begyptian god deck\b/i, 'boxset'],
+  // "Legendary Decks" is three fixed decks in a box. "Legendary Collection" is a box
+  // of sealed packs and must not be promised as guaranteed, so it is deliberately
+  // not matched here.
+  [/\blegendary decks\b/i, 'boxset'],
+  [/\btin\b/i, 'tin'],
+  [/\btournament pack\b/i, 'promo'],
+  [/\bchampionship\b|\bprize card\b|\bpromotional\b/i, 'promo'],
+];
+
+export function classifyProduct(setName: string, setCode: string, numOfCards: number): ProductClass {
   const code = setCode.toUpperCase().trim();
-  if (!code) return 'unknown';
 
   const override = OVERRIDES[code];
   if (override) return override;
+
+  for (const [pattern, product] of NAME_RULES) {
+    if (pattern.test(setName)) return product;
+  }
+
+  if (!code) return 'unknown';
 
   // Longest-prefix families first so `SGX`/`SBC` win over the bare `S` families.
   if (matchesAny(code, BOXSET_PREFIXES)) return 'boxset';
