@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BudgetPanel } from './components/BudgetPanel';
 import { BuyPlanPanel } from './components/BuyPlanPanel';
-import { DeckTable } from './components/DeckTable';
-import { DEFAULT_FILTERS, Filters, type FilterState } from './components/Filters';
+import { DeckList } from './components/DeckList';
+import { DEFAULT_FILTERS, type FilterState } from './components/Filters';
 import { ImportPanel } from './components/ImportPanel';
 import { ReprintRadar } from './components/ReprintRadar';
-import { SetFinderTable } from './components/SetFinderTable';
+import { SetList } from './components/SetList';
 import { buildBuyPlan } from './lib/buyPlan';
 import {
   collectionFromDeck,
@@ -19,8 +19,8 @@ import {
 } from './lib/collection';
 import { loadDatabase } from './lib/dataset';
 import { countCards, parseDeck, toYdke } from './lib/import';
-import { deckBudget } from './lib/pricing';
-import { recentReprints, upcomingReprints, waitWarnings } from './lib/reprints';
+import { deckBudget, formatEuro } from './lib/pricing';
+import { upcomingReprints, waitWarnings } from './lib/reprints';
 import { deckNeeds, rankSets } from './lib/setFinder';
 import { clearDeckHash, readDeckFromHash, shareUrl, writeDeckToHash } from './lib/share';
 import type { Database, Deck } from './lib/types';
@@ -30,6 +30,8 @@ export function App() {
   const [dbError, setDbError] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [deck, setDeck] = useState<Deck | null>(null);
+  const [editing, setEditing] = useState(true);
+  const [copied, setCopied] = useState(false);
   const [collection, setCollection] = useState<Collection>(EMPTY_COLLECTION);
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
   const collectionInput = useRef<HTMLInputElement>(null);
@@ -39,11 +41,11 @@ export function App() {
       .then((loaded) => {
         setDb(loaded);
         setCollection(pruneCollection(loadCollection(), loaded));
-        // A shared link carries the deck in the hash.
         const shared = readDeckFromHash();
         if (shared) {
           setInput(shared);
           setDeck(parseDeck(shared, loaded));
+          setEditing(false);
         }
       })
       .catch((error: unknown) => setDbError(error instanceof Error ? error.message : String(error)));
@@ -58,13 +60,26 @@ export function App() {
     if (!db) return;
     const parsed = parseDeck(input, db);
     setDeck(parsed);
-    if (parsed.entries.length > 0) writeDeckToHash(toYdke(parsed));
+    if (parsed.entries.length > 0) {
+      writeDeckToHash(toYdke(parsed));
+      // Fold the paste box away — on a phone it is half a screen of nothing once
+      // the deck is in.
+      setEditing(false);
+    }
   }
 
   function clear() {
     setDeck(null);
     setInput('');
+    setEditing(true);
     clearDeckHash();
+  }
+
+  async function copyShareLink() {
+    if (!deck) return;
+    await navigator.clipboard.writeText(shareUrl(toYdke(deck)));
+    setCopied(true);
+    globalThis.setTimeout(() => setCopied(false), 2000);
   }
 
   async function importCollectionFile(file: File) {
@@ -80,16 +95,14 @@ export function App() {
       includeUnreleased: filters.includeUnreleased,
       includeOutOfPrint: filters.includeOutOfPrint,
     };
-    const outstanding = needs.filter((need) => need.needed > 0);
     return {
       needs,
-      outstanding,
+      outstanding: needs.filter((need) => need.needed > 0),
       coverage: rankSets(needs, coverageOptions),
-      // The plan always sticks to guaranteed products unless the filter opens it up.
+      // The plan sticks to guaranteed products unless the filter opens it up.
       plan: buildBuyPlan(needs, { ...coverageOptions, guaranteedOnly: true }),
       upcoming: upcomingReprints(needs),
       warnings: waitWarnings(needs),
-      recent: recentReprints(needs),
       budget: deckBudget(needs),
     };
   }, [deck, collection, filters]);
@@ -98,56 +111,58 @@ export function App() {
     <main>
       <header className="app">
         <h1>YGO Set Finder</h1>
-        <span className="tagline">which sets cover your deck — and what to buy first</span>
-        {db && <span className="meta">card data {db.generated.slice(0, 10)}</span>}
+        {db && <span className="meta">data {db.generated.slice(0, 10)}</span>}
       </header>
 
       {dbError && (
         <div className="notice error">
-          <strong>Card data missing.</strong> {dbError}
-          <br />
-          Run <code>npm run fetch-data</code> to download it from YGOPRODeck, then reload.
+          <strong>Card data missing.</strong> Run <code>npm run fetch-data</code>, then reload.
         </div>
       )}
-
-      <ImportPanel
-        value={input}
-        onChange={setInput}
-        onSubmit={analyse}
-        onClear={clear}
-        deck={deck}
-        shareLink={deck && deck.entries.length > 0 ? shareUrl(toYdke(deck)) : null}
-      />
-
       {!db && !dbError && <p className="empty">Loading card data…</p>}
+
+      {editing || !deck ? (
+        <ImportPanel
+          value={input}
+          onChange={setInput}
+          onSubmit={analyse}
+          deck={deck}
+          onCancel={deck ? () => setEditing(false) : null}
+        />
+      ) : (
+        analysis && (
+          <div className="deckbar">
+            <strong>{countCards(deck)} cards</strong>
+            <span className="sep">·</span>
+            <span className="muted">{analysis.outstanding.length} missing</span>
+            <span className="sep">·</span>
+            <span className="muted">{formatEuro(analysis.budget.missingCents)}</span>
+            <button className="link" style={{ marginLeft: 'auto' }} onClick={() => setEditing(true)}>
+              Change
+            </button>
+            <button className="link" onClick={() => void copyShareLink()}>
+              {copied ? 'Copied' : 'Share'}
+            </button>
+            <button className="link" onClick={clear}>
+              Clear
+            </button>
+          </div>
+        )
+      )}
 
       {deck && analysis && (
         <>
-          <div className="stats" style={{ marginBottom: 18 }}>
-            <div className="stat">
-              <div className="value">{countCards(deck)}</div>
-              <div className="label">cards in deck</div>
-            </div>
-            <div className="stat">
-              <div className="value">{analysis.needs.length}</div>
-              <div className="label">distinct cards</div>
-            </div>
-            <div className="stat">
-              <div className="value">{analysis.outstanding.length}</div>
-              <div className="label">still missing</div>
-            </div>
-            <div className="stat">
-              <div className="value">{analysis.coverage[0]?.distinctCards ?? 0}</div>
-              <div className="label">best single set</div>
-            </div>
-          </div>
+          <BuyPlanPanel plan={analysis.plan} />
 
-          <Filters value={filters} onChange={setFilters} />
+          <SetList
+            coverage={analysis.coverage}
+            totalNeeded={analysis.outstanding.length}
+            filters={filters}
+            onFiltersChange={setFilters}
+          />
 
-          <SetFinderTable coverage={analysis.coverage} totalNeeded={analysis.outstanding.length} />
-          <BuyPlanPanel plan={analysis.plan} guaranteedOnly />
-          <ReprintRadar upcoming={analysis.upcoming} warnings={analysis.warnings} recent={analysis.recent} />
-          <BudgetPanel budget={analysis.budget} planValueCents={analysis.plan.valueCents} />
+          <ReprintRadar upcoming={analysis.upcoming} warnings={analysis.warnings} />
+          <BudgetPanel budget={analysis.budget} />
 
           <input
             ref={collectionInput}
@@ -160,7 +175,7 @@ export function App() {
               event.target.value = '';
             }}
           />
-          <DeckTable
+          <DeckList
             needs={analysis.needs}
             ownedCount={collection.size}
             onOwnedChange={(cardId, owned) => updateCollection(withOwned(collection, cardId, owned))}
@@ -172,8 +187,7 @@ export function App() {
       )}
 
       <footer className="app">
-        Card data from <a href="https://ygoprodeck.com/api-guide/">YGOPRODeck</a>. Prices are Cardmarket averages and
-        are only as fresh as the last data refresh. Not affiliated with Konami.
+        Card data from <a href="https://ygoprodeck.com/api-guide/">YGOPRODeck</a>. Cardmarket prices are estimates.
       </footer>
     </main>
   );

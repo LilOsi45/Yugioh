@@ -1,3 +1,10 @@
+/*
+ * Mobile first. The app is used on a phone while standing in a card shop, so every
+ * layout rule here starts at 390px and only widens later. Nothing may scroll
+ * sideways — the earlier table-based version pushed the coverage numbers, the whole
+ * point of the app, off the right edge of the screen.
+ */
+
 :root {
   --bg: #12141c;
   --bg-raised: #1a1d28;
@@ -6,251 +13,312 @@
   --text: #e6e8f0;
   --text-dim: #969ab0;
   --accent: #d4a437;
-  --accent-dim: #8a6c22;
   --good: #4ea87a;
   --warn: #d98b3a;
   --bad: #cf5f5f;
-  --radius: 10px;
+  --radius: 12px;
   color-scheme: dark;
 }
 
 @media (prefers-color-scheme: light) {
   :root {
-    --bg: #f5f5f7;
+    --bg: #f4f5f8;
     --bg-raised: #ffffff;
     --bg-sunken: #eceef3;
-    --border: #d6d9e2;
+    --border: #dcdfe8;
     --text: #1b1d26;
     --text-dim: #5f6478;
-    --accent: #9a7213;
-    --accent-dim: #c8a83f;
+    --accent: #8a6410;
     color-scheme: light;
   }
 }
 
 * {
   box-sizing: border-box;
+  min-width: 0; /* stops long set names from forcing a grid track wider than the screen */
 }
 
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 15px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font: 15px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  overflow-x: hidden;
 }
 
 main {
-  max-width: 1100px;
+  max-width: 720px;
   margin: 0 auto;
-  padding: 24px 20px 80px;
-}
-
-h1 {
-  font-size: 24px;
-  margin: 0;
-  letter-spacing: -0.01em;
-}
-
-h2 {
-  font-size: 17px;
-  margin: 0 0 4px;
-}
-
-h3 {
-  font-size: 14px;
-  margin: 0 0 8px;
-  color: var(--text-dim);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  padding: 14px 12px 48px;
 }
 
 a {
   color: var(--accent);
 }
 
+/* ---------- header ---------- */
+
 header.app {
   display: flex;
-  flex-wrap: wrap;
   align-items: baseline;
-  gap: 12px;
-  padding-bottom: 20px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 24px;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 
-header.app .tagline {
-  color: var(--text-dim);
-  font-size: 14px;
+header.app h1 {
+  font-size: 18px;
+  margin: 0;
+  letter-spacing: -0.01em;
 }
 
 header.app .meta {
   margin-left: auto;
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: 11px;
 }
 
-section.panel {
+/* ---------- panels ---------- */
+
+.panel {
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 18px;
-  margin-bottom: 18px;
+  padding: 14px;
+  margin-bottom: 12px;
 }
 
-section.panel > .panel-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 10px;
-  margin-bottom: 14px;
+.panel > h2 {
+  font-size: 15px;
+  margin: 0 0 10px;
+  letter-spacing: -0.01em;
 }
 
-section.panel > .panel-head p {
-  margin: 0;
-  color: var(--text-dim);
-  font-size: 13px;
-  flex: 1 1 240px;
+/* Collapsible sections: everything below the buying plan starts closed so the
+   answer is not buried under five screens of detail. */
+details.panel {
+  padding: 0;
 }
 
-textarea {
-  width: 100%;
-  min-height: 150px;
-  background: var(--bg-sunken);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px;
-  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-  resize: vertical;
-}
-
-textarea:focus,
-button:focus-visible,
-input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
-.dropzone {
-  border: 1px dashed var(--border);
-  border-radius: var(--radius);
-  padding: 4px;
-  transition: border-color 0.15s, background 0.15s;
-}
-
-.dropzone.over {
-  border-color: var(--accent);
-  background: rgba(212, 164, 55, 0.08);
-}
-
-.row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-  margin-top: 12px;
-}
-
-button {
-  background: var(--bg-sunken);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 14px;
-  font-size: 14px;
+details.panel > summary {
+  padding: 13px 14px;
   cursor: pointer;
-}
-
-button:hover:not(:disabled) {
-  border-color: var(--accent-dim);
-}
-
-button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #16171d;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
   font-weight: 600;
 }
 
-button:disabled {
-  opacity: 0.5;
-  cursor: default;
+details.panel > summary::-webkit-details-marker {
+  display: none;
 }
 
-button.link {
+details.panel > summary::after {
+  content: '▾';
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+details.panel[open] > summary::after {
+  content: '▴';
+}
+
+details.panel > summary .count {
+  color: var(--text-dim);
+  font-weight: 400;
+  font-size: 13px;
+}
+
+details.panel > .body {
+  padding: 0 14px 14px;
+}
+
+/* ---------- deck summary bar ---------- */
+
+.deckbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 11px 14px;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.deckbar .sep {
+  color: var(--border);
+}
+
+/* ---------- buying plan, the headline answer ---------- */
+
+.plan {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+
+.plan .headline {
+  font-size: 15px;
+  margin: 0 0 12px;
+  color: var(--text-dim);
+}
+
+.plan .headline strong {
+  color: var(--text);
+  font-size: 17px;
+}
+
+.step {
+  display: grid;
+  grid-template-columns: 26px 1fr;
+  gap: 10px;
+  padding: 11px 0;
+  border-top: 1px solid var(--border);
+}
+
+.step .index {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #16171d;
+  font-weight: 700;
+  font-size: 13px;
+  display: grid;
+  place-items: center;
+}
+
+.step .name {
+  font-weight: 600;
+}
+
+.step .gain {
+  color: var(--good);
+  font-size: 13px;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.step .cards {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin-top: 3px;
+}
+
+/* ---------- set list ---------- */
+
+.set {
+  display: grid;
+  grid-template-columns: 54px 1fr;
+  gap: 10px;
+  align-items: start;
+  width: 100%;
+  text-align: left;
   background: none;
   border: none;
-  color: var(--accent);
-  padding: 0;
-  font-size: 13px;
-  text-decoration: underline;
-}
-
-label.check {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 13px;
-  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+  padding: 11px 0;
+  color: inherit;
+  font: inherit;
   cursor: pointer;
 }
 
-table {
-  width: 100%;
-  border-collapse: collapse;
+.set:first-of-type {
+  border-top: none;
+}
+
+/* The coverage number is the answer, so it gets the leading position and the
+   largest type — it is never allowed to end up off-screen again. */
+.set .cover {
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 0;
+  text-align: center;
+  line-height: 1.1;
+}
+
+.set .cover b {
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.set .cover span {
+  display: block;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.set .name {
+  font-weight: 600;
+}
+
+.set .code {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.set .meta {
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.set-detail {
+  grid-column: 1 / -1;
+  margin-top: 8px;
+  padding: 10px;
+  background: var(--bg-sunken);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.set-detail .line {
+  display: flex;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.set-detail .line .rarity {
+  margin-left: auto;
+  color: var(--text-dim);
+  text-align: right;
+}
+
+/* ---------- generic rows ---------- */
+
+.line {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 7px 0;
+  border-top: 1px solid var(--border);
   font-size: 14px;
 }
 
-th {
-  text-align: left;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
-  font-weight: 600;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
+.line:first-child {
+  border-top: none;
 }
 
-td {
-  padding: 8px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
-}
-
-tr:last-child td {
-  border-bottom: none;
-}
-
-td.num,
-th.num {
-  text-align: right;
+.line .num {
+  margin-left: auto;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-tr.expandable {
-  cursor: pointer;
-}
-
-tr.expandable:hover td {
-  background: var(--bg-sunken);
-}
-
-tr.detail td {
-  background: var(--bg-sunken);
-  padding: 0 8px 12px;
-}
-
-.scroll-x {
-  overflow-x: auto;
-}
+/* ---------- badges, buttons, misc ---------- */
 
 .badge {
   display: inline-block;
-  padding: 2px 7px;
+  padding: 1px 7px;
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
@@ -274,72 +342,120 @@ tr.detail td {
   border-color: color-mix(in srgb, var(--bad) 45%, transparent);
 }
 
-.stats {
+button {
+  background: var(--bg-sunken);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 14px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #16171d;
+  font-weight: 600;
+}
+
+button.link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  padding: 0;
+  font-size: 13px;
+  text-decoration: underline;
+}
+
+button:disabled {
+  opacity: 0.5;
+}
+
+textarea {
+  width: 100%;
+  min-height: 130px;
+  background: var(--bg-sunken);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 11px;
+  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  resize: vertical;
+}
+
+textarea:focus,
+button:focus-visible,
+input:focus-visible,
+summary:focus-visible,
+.set:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.dropzone {
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 4px;
+}
+
+.dropzone.over {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.row {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
 }
 
-.stat {
-  flex: 1 1 130px;
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+/* Filters are toggle chips rather than checkbox rows — four checkbox lines cost
+   three lines of vertical space on a phone. */
+.chip {
+  border-radius: 999px;
+  padding: 5px 11px;
+  font-size: 12.5px;
   background: var(--bg-sunken);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 10px 12px;
+  color: var(--text-dim);
+  cursor: pointer;
 }
 
-.stat .value {
-  font-size: 20px;
-  font-weight: 600;
+.chip[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+input[type='number'] {
+  width: 52px;
+  background: var(--bg-sunken);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
-}
-
-.stat .label {
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-.step {
-  display: flex;
-  gap: 12px;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.step:last-child {
-  border-bottom: none;
-}
-
-.step .index {
-  flex: 0 0 26px;
-  height: 26px;
-  border-radius: 999px;
-  background: var(--accent);
-  color: #16171d;
-  font-weight: 700;
-  font-size: 13px;
-  display: grid;
-  place-items: center;
-}
-
-.step .body {
-  flex: 1;
-  min-width: 0;
-}
-
-.cards-inline {
-  color: var(--text-dim);
-  font-size: 13px;
-  margin: 4px 0 0;
+  text-align: right;
 }
 
 .notice {
   border-left: 3px solid var(--warn);
   background: var(--bg-sunken);
-  padding: 10px 12px;
-  border-radius: 0 var(--radius) var(--radius) 0;
+  padding: 9px 11px;
+  border-radius: 0 8px 8px 0;
   font-size: 13px;
-  margin-bottom: 14px;
+  margin-top: 10px;
 }
 
 .notice.error {
@@ -358,17 +474,6 @@ tr.detail td {
   margin: 0;
 }
 
-input[type='number'] {
-  width: 58px;
-  background: var(--bg-sunken);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 4px 6px;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-}
-
 .muted {
   color: var(--text-dim);
 }
@@ -379,8 +484,28 @@ input[type='number'] {
 
 footer.app {
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: 11.5px;
   text-align: center;
-  padding-top: 24px;
-  border-top: 1px solid var(--border);
+  padding-top: 18px;
+}
+
+/* ---------- wider screens ---------- */
+
+@media (min-width: 700px) {
+  main {
+    padding: 24px 20px 64px;
+  }
+
+  header.app h1 {
+    font-size: 22px;
+  }
+
+  .set {
+    grid-template-columns: 62px 1fr auto;
+    align-items: center;
+  }
+
+  .set .meta {
+    margin-top: 2px;
+  }
 }

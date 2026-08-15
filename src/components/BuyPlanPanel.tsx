@@ -4,69 +4,65 @@ import { formatEuro } from '../lib/pricing';
 
 interface Props {
   plan: BuyPlan;
-  guaranteedOnly: boolean;
 }
 
-export function BuyPlanPanel({ plan, guaranteedOnly }: Props) {
-  return (
-    <section className="panel">
-      <div className="panel-head">
-        <h2>Buying plan</h2>
-        <p>
-          {guaranteedOnly
-            ? 'Products with fixed contents only, so every card listed is one you actually get.'
-            : 'Boosters included — cards from those sets are a chance, not a guarantee.'}
+/**
+ * The headline answer, deliberately first on the page: what to buy, in order.
+ * Everything else on the screen is supporting detail.
+ */
+export function BuyPlanPanel({ plan }: Props) {
+  if (plan.steps.length === 0) {
+    return (
+      <section className="panel plan">
+        <h2>What to buy</h2>
+        <p className="empty">
+          No sealed product covers what you are missing — these have to be bought as singles.
         </p>
-      </div>
+      </section>
+    );
+  }
 
-      {plan.steps.length === 0 ? (
-        <p className="empty">No product covers the cards you are missing. They have to be bought as singles.</p>
-      ) : (
-        <>
-          <div className="stats" style={{ marginBottom: 8 }}>
-            <div className="stat">
-              <div className="value">
-                {plan.coveredCards}
-                <span className="muted" style={{ fontSize: 15 }}>
-                  {' '}
-                  / {plan.totalCards}
-                </span>
-              </div>
-              <div className="label">cards covered</div>
+  return (
+    <section className="panel plan">
+      <h2>What to buy</h2>
+      <p className="headline">
+        <strong>
+          {plan.steps.length} {plan.steps.length === 1 ? 'product' : 'products'}
+        </strong>{' '}
+        {plan.steps.length === 1 ? 'covers' : 'cover'} <strong>{plan.coveredCards}</strong> of your{' '}
+        {plan.totalCards} missing cards
+        {plan.valueCents > 0 && <> — {formatEuro(plan.valueCents)} worth of singles</>}
+      </p>
+
+      {plan.steps.map((step, index) => (
+        <div className="step" key={step.set.index}>
+          <div className="index">{index + 1}</div>
+          <div>
+            <div className="name">
+              {step.set.name} <span className="muted">{step.set.code}</span>
             </div>
-            <div className="stat">
-              <div className="value">{plan.steps.length}</div>
-              <div className="label">products to buy</div>
+            <div className="gain">
+              +{step.newCards.length} cards ({step.newCopies} copies)
             </div>
-            <div className="stat">
-              <div className="value">{formatEuro(plan.valueCents)}</div>
-              <div className="label">singles value replaced</div>
+            <div className="cards">
+              {PRODUCT_LABELS[step.set.product]} · {step.newCards.map((covered) => covered.card.name).join(', ')}
             </div>
           </div>
+        </div>
+      ))}
 
-          {plan.steps.map((step, index) => (
-            <div className="step" key={step.set.index}>
-              <div className="index">{index + 1}</div>
-              <div className="body">
-                <strong>{step.set.name}</strong> <span className="muted nowrap">{step.set.code}</span>{' '}
-                <span className={step.set.guaranteed ? 'badge guaranteed' : 'badge random'}>
-                  {PRODUCT_LABELS[step.set.product]}
-                </span>
-                <p className="cards-inline">
-                  +{step.newCards.length} cards ({step.newCopies} copies, {formatEuro(step.newValueCents)} of singles):{' '}
-                  {step.newCards.map((covered) => covered.card.name).join(', ')}
-                </p>
-              </div>
-            </div>
-          ))}
-
-          {plan.remaining.length > 0 && (
-            <p className="cards-inline" style={{ marginTop: 14 }}>
-              <strong className="muted">Buy as singles:</strong>{' '}
+      {plan.remaining.length > 0 && (
+        <div className="step">
+          <div className="index" style={{ background: 'var(--border)', color: 'var(--text-dim)' }}>
+            +
+          </div>
+          <div>
+            <div className="name">Buy as singles</div>
+            <div className="cards">
               {plan.remaining.map((need) => `${need.needed}x ${need.card.name}`).join(', ')}
-            </p>
-          )}
-        </>
+            </div>
+          </div>
+        </div>
       )}
     </section>
   );
