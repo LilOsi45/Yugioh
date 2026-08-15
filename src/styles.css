@@ -509,3 +509,135 @@ footer.app {
     margin-top: 2px;
   }
 }
+
+/* ---------- tabs ---------- */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 4px;
+  margin-bottom: 12px;
+}
+
+.tab {
+  flex: 1;
+  background: none;
+  border: none;
+  border-radius: 7px;
+  padding: 8px 6px;
+  font-size: 14px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.tab[aria-current='true'] {
+  background: var(--bg-raised);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.tab-count {
+  font-size: 11px;
+  background: var(--border);
+  color: var(--text-dim);
+  border-radius: 999px;
+  padding: 0 6px;
+  font-weight: 600;
+}
+
+/* ---------- saved decks ---------- */
+
+.saved {
+  border-top: 1px solid var(--border);
+  padding: 11px 0;
+}
+
+.saved:first-of-type {
+  border-top: none;
+}
+
+.saved-main {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.saved-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.saved-head .name {
+  font-weight: 600;
+}
+
+.saved-head .badge {
+  margin-left: auto;
+}
+
+/* Progress towards owning every copy a deck asks for. */
+.bar {
+  height: 7px;
+  border-radius: 999px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.bar .fill {
+  height: 100%;
+  background: var(--good);
+  transition: width 0.2s;
+}
+
+/* ---------- scanner ---------- */
+
+.scanview {
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #000;
+  aspect-ratio: 3 / 4;
+}
+
+.scanview video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Shows where the passcode has to sit for the crop to catch it. */
+.scanguide {
+  position: absolute;
+  border: 2px solid var(--accent);
+  border-radius: 4px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+}
+
+/* ---------- search ---------- */
+
+.search {
+  width: 100%;
+  background: var(--bg-sunken);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 11px;
+  font-size: 15px; /* 16px or larger stops iOS zooming the page on focus */
+  margin-bottom: 4px;
+}

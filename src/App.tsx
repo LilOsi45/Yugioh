@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { BudgetPanel } from './components/BudgetPanel';
+import { BuildMode } from './components/BuildMode';
 import { BuyPlanPanel } from './components/BuyPlanPanel';
+import { CollectionPanel } from './components/CollectionPanel';
+import { DeckLibrary } from './components/DeckLibrary';
 import { DeckList } from './components/DeckList';
 import { DEFAULT_FILTERS, type FilterState } from './components/Filters';
 import { ImportPanel } from './components/ImportPanel';
 import { ReprintRadar } from './components/ReprintRadar';
 import { SetList } from './components/SetList';
+import { Tabs, type Tab } from './components/Tabs';
 import { buildBuyPlan } from './lib/buyPlan';
 import {
   collectionFromDeck,
@@ -19,6 +23,15 @@ import {
 } from './lib/collection';
 import { loadDatabase } from './lib/dataset';
 import { countCards, parseDeck, toYdke } from './lib/import';
+import {
+  addDeck,
+  loadLibrary,
+  removeDeck,
+  renameDeck,
+  saveLibrary,
+  suggestDeckName,
+  type SavedDeck,
+} from './lib/library';
 import { deckBudget, formatEuro } from './lib/pricing';
 import { upcomingReprints, waitWarnings } from './lib/reprints';
 import { deckNeeds, rankSets } from './lib/setFinder';
@@ -28,11 +41,15 @@ import type { Database, Deck } from './lib/types';
 export function App() {
   const [db, setDb] = useState<Database | null>(null);
   const [dbError, setDbError] = useState<string | null>(null);
+  const [tab, setTab] = useState<Tab>('analyse');
   const [input, setInput] = useState('');
   const [deck, setDeck] = useState<Deck | null>(null);
   const [editing, setEditing] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [collection, setCollection] = useState<Collection>(EMPTY_COLLECTION);
+  const [library, setLibrary] = useState<SavedDeck[]>([]);
+  const [building, setBuilding] = useState<SavedDeck | null>(null);
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
   const collectionInput = useRef<HTMLInputElement>(null);
 
@@ -41,6 +58,7 @@ export function App() {
       .then((loaded) => {
         setDb(loaded);
         setCollection(pruneCollection(loadCollection(), loaded));
+        setLibrary(loadLibrary());
         const shared = readDeckFromHash();
         if (shared) {
           setInput(shared);
@@ -56,22 +74,46 @@ export function App() {
     saveCollection(next);
   }
 
+  function updateLibrary(next: SavedDeck[]) {
+    setLibrary(next);
+    saveLibrary(next);
+  }
+
   function analyse() {
     if (!db) return;
     const parsed = parseDeck(input, db);
     setDeck(parsed);
+    setSaved(false);
     if (parsed.entries.length > 0) {
       writeDeckToHash(toYdke(parsed));
-      // Fold the paste box away — on a phone it is half a screen of nothing once
-      // the deck is in.
       setEditing(false);
     }
+  }
+
+  function saveCurrentDeck() {
+    if (!deck || deck.entries.length === 0) return;
+    const name = globalThis.prompt('Name this deck', suggestDeckName(deck));
+    if (!name) return;
+    updateLibrary(addDeck(library, name, toYdke(deck)));
+    setSaved(true);
+  }
+
+  function openSaved(entry: SavedDeck) {
+    if (!db) return;
+    setInput(entry.ydke);
+    setDeck(parseDeck(entry.ydke, db));
+    setEditing(false);
+    setSaved(true);
+    setBuilding(null);
+    setTab('analyse');
+    writeDeckToHash(entry.ydke);
   }
 
   function clear() {
     setDeck(null);
     setInput('');
     setEditing(true);
+    setSaved(false);
     clearDeckHash();
   }
 
@@ -99,13 +141,26 @@ export function App() {
       needs,
       outstanding: needs.filter((need) => need.needed > 0),
       coverage: rankSets(needs, coverageOptions),
-      // The plan sticks to guaranteed products unless the filter opens it up.
       plan: buildBuyPlan(needs, { ...coverageOptions, guaranteedOnly: true }),
       upcoming: upcomingReprints(needs),
       warnings: waitWarnings(needs),
       budget: deckBudget(needs),
     };
   }, [deck, collection, filters]);
+
+  const hiddenCollectionInput = (
+    <input
+      ref={collectionInput}
+      type="file"
+      accept=".ydk,.txt"
+      hidden
+      onChange={(event) => {
+        const file = event.target.files?.[0];
+        if (file) void importCollectionFile(file);
+        event.target.value = '';
+      }}
+    />
+  );
 
   return (
     <main>
@@ -121,67 +176,107 @@ export function App() {
       )}
       {!db && !dbError && <p className="empty">Loading card data…</p>}
 
-      {editing || !deck ? (
-        <ImportPanel
-          value={input}
-          onChange={setInput}
-          onSubmit={analyse}
-          deck={deck}
-          onCancel={deck ? () => setEditing(false) : null}
+      {db && (
+        <Tabs
+          active={tab}
+          onChange={(next) => {
+            setTab(next);
+            setBuilding(null);
+          }}
+          deckCount={library.length}
+          cardCount={collection.size}
         />
-      ) : (
-        analysis && (
-          <div className="deckbar">
-            <strong>{countCards(deck)} cards</strong>
-            <span className="sep">·</span>
-            <span className="muted">{analysis.outstanding.length} missing</span>
-            <span className="sep">·</span>
-            <span className="muted">{formatEuro(analysis.budget.missingCents)}</span>
-            <button className="link" style={{ marginLeft: 'auto' }} onClick={() => setEditing(true)}>
-              Change
-            </button>
-            <button className="link" onClick={() => void copyShareLink()}>
-              {copied ? 'Copied' : 'Share'}
-            </button>
-            <button className="link" onClick={clear}>
-              Clear
-            </button>
-          </div>
-        )
       )}
 
-      {deck && analysis && (
+      {db && tab === 'analyse' && (
         <>
-          <BuyPlanPanel plan={analysis.plan} />
+          {editing || !deck ? (
+            <ImportPanel
+              value={input}
+              onChange={setInput}
+              onSubmit={analyse}
+              deck={deck}
+              onCancel={deck ? () => setEditing(false) : null}
+            />
+          ) : (
+            analysis && (
+              <div className="deckbar">
+                <strong>{countCards(deck)} cards</strong>
+                <span className="sep">·</span>
+                <span className="muted">{analysis.outstanding.length} missing</span>
+                <span className="sep">·</span>
+                <span className="muted">{formatEuro(analysis.budget.missingCents)}</span>
+                <button className="link" style={{ marginLeft: 'auto' }} onClick={saveCurrentDeck}>
+                  {saved ? 'Saved ✓' : 'Save deck'}
+                </button>
+                <button className="link" onClick={() => setEditing(true)}>
+                  Change
+                </button>
+                <button className="link" onClick={() => void copyShareLink()}>
+                  {copied ? 'Copied' : 'Share'}
+                </button>
+                <button className="link" onClick={clear}>
+                  Clear
+                </button>
+              </div>
+            )
+          )}
 
-          <SetList
-            coverage={analysis.coverage}
-            totalNeeded={analysis.outstanding.length}
-            filters={filters}
-            onFiltersChange={setFilters}
-          />
+          {deck && analysis && (
+            <>
+              <BuyPlanPanel plan={analysis.plan} />
+              <SetList
+                coverage={analysis.coverage}
+                totalNeeded={analysis.outstanding.length}
+                filters={filters}
+                onFiltersChange={setFilters}
+              />
+              <ReprintRadar upcoming={analysis.upcoming} warnings={analysis.warnings} />
+              <BudgetPanel budget={analysis.budget} />
+              {hiddenCollectionInput}
+              <DeckList
+                needs={analysis.needs}
+                ownedCount={collection.size}
+                onOwnedChange={(cardId, owned) => updateCollection(withOwned(collection, cardId, owned))}
+                onResetCollection={() => updateCollection(EMPTY_COLLECTION)}
+                onImportCollection={() => collectionInput.current?.click()}
+                upcoming={analysis.upcoming}
+              />
+            </>
+          )}
+        </>
+      )}
 
-          <ReprintRadar upcoming={analysis.upcoming} warnings={analysis.warnings} />
-          <BudgetPanel budget={analysis.budget} />
-
-          <input
-            ref={collectionInput}
-            type="file"
-            accept=".ydk,.txt"
-            hidden
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) void importCollectionFile(file);
-              event.target.value = '';
-            }}
-          />
-          <DeckList
-            needs={analysis.needs}
-            ownedCount={collection.size}
+      {db && tab === 'decks' &&
+        (building ? (
+          <BuildMode
+            saved={building}
+            db={db}
+            collection={collection}
             onOwnedChange={(cardId, owned) => updateCollection(withOwned(collection, cardId, owned))}
-            onResetCollection={() => updateCollection(EMPTY_COLLECTION)}
-            onImportCollection={() => collectionInput.current?.click()}
-            upcoming={analysis.upcoming}
+            onBack={() => setBuilding(null)}
+          />
+        ) : (
+          <DeckLibrary
+            library={library}
+            db={db}
+            collection={collection}
+            onBuild={setBuilding}
+            onOpen={openSaved}
+            onRemove={(id) => updateLibrary(removeDeck(library, id))}
+            onRename={(id, name) => updateLibrary(renameDeck(library, id, name))}
+          />
+        ))}
+
+      {db && tab === 'collection' && (
+        <>
+          {hiddenCollectionInput}
+          <CollectionPanel
+            db={db}
+            collection={collection}
+            onOwnedChange={(cardId, owned) => updateCollection(withOwned(collection, cardId, owned))}
+            onReset={() => updateCollection(EMPTY_COLLECTION)}
+            onImport={() => collectionInput.current?.click()}
           />
         </>
       )}
