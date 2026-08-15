@@ -58,7 +58,13 @@ class StringTable {
  *
  * Kept free of network access so it can be unit-tested against fixtures.
  */
-export function buildIndex(apiCards: ApiCard[], apiSets: ApiSet[], generated = new Date()): RawDatabase {
+export function buildIndex(
+  apiCards: ApiCard[],
+  apiSets: ApiSet[],
+  generated = new Date(),
+  /** Cards from `cardinfo.php?language=de`; only `id` and `name` are used. */
+  germanCards: Pick<ApiCard, 'id' | 'name'>[] = [],
+): RawDatabase {
   const sets: RawSet[] = [];
   const setIndexByName = new Map<string, number>();
 
@@ -114,6 +120,18 @@ export function buildIndex(apiCards: ApiCard[], apiSets: ApiSet[], generated = n
     }
   }
 
+  // German names arrive as a separate, smaller dump keyed by the same passcode.
+  const positionByPasscode = new Map<number, number>();
+  cards.forEach((card, index) => positionByPasscode.set(card[0], index));
+  const de: [number, string][] = [];
+  for (const german of germanCards) {
+    const position = positionByPasscode.get(german.id);
+    if (position === undefined || !german.name) continue;
+    // An untranslated entry repeats the English name; storing it wastes space.
+    if (german.name === cards[position]![1]) continue;
+    de.push([position, german.name]);
+  }
+
   return {
     v: DB_FORMAT_VERSION,
     generated: generated.toISOString(),
@@ -122,5 +140,6 @@ export function buildIndex(apiCards: ApiCard[], apiSets: ApiSet[], generated = n
     sets,
     cards,
     aliases,
+    de,
   };
 }

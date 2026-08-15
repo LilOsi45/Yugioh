@@ -1,9 +1,9 @@
 import { useRef, useState, type DragEvent } from 'react';
 import type { Deck } from '../lib/types';
 
-const EXAMPLE = `Paste a ydke:// URL, a .ydk file, or a list:
-3 Ash Blossom & Joyous Spring
-2 Infinite Impermanence`;
+const EXAMPLE = `ydke://-Link, .ydk-Datei oder Liste einfügen — deutsche oder englische Kartennamen:
+3 Aschenblüte & Freudiger Frühling
+2 Unendliche Unantastbarkeit`;
 
 interface Props {
   value: string;
@@ -30,7 +30,7 @@ export function ImportPanel({ value, onChange, onSubmit, deck, onCancel }: Props
 
   return (
     <section className="panel">
-      <h2>Your deck</h2>
+      <h2>Dein Deck</h2>
 
       <div
         className={dragging ? 'dropzone over' : 'dropzone'}
@@ -54,7 +54,7 @@ export function ImportPanel({ value, onChange, onSubmit, deck, onCancel }: Props
 
       <div className="row">
         <button className="primary" onClick={onSubmit} disabled={!value.trim()}>
-          Analyse deck
+          Deck analysieren
         </button>
         <input
           ref={fileInput}
@@ -66,17 +66,17 @@ export function ImportPanel({ value, onChange, onSubmit, deck, onCancel }: Props
             if (file) void readFile(file);
           }}
         />
-        <button onClick={() => fileInput.current?.click()}>Load .ydk</button>
+        <button onClick={() => fileInput.current?.click()}>.ydk laden</button>
         {onCancel && (
           <button className="link" onClick={onCancel}>
-            Cancel
+            Abbrechen
           </button>
         )}
       </div>
 
       {deck && deck.unresolved.length > 0 && (
         <div className="notice">
-          <strong>{deck.unresolved.length} line(s) skipped:</strong>{' '}
+          <strong>{deck.unresolved.length} Zeile(n) übersprungen:</strong>{' '}
           <span className="muted">{deck.unresolved.slice(0, 4).join(' · ')}</span>
           {deck.unresolved.length > 4 && <span className="muted"> …</span>}
         </div>

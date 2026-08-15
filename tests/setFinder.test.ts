@@ -176,10 +176,10 @@ describe('reprints', () => {
   });
 
   it('phrases the countdown for humans', () => {
-    expect(formatDaysUntil(0)).toBe('released');
-    expect(formatDaysUntil(1)).toBe('tomorrow');
-    expect(formatDaysUntil(12)).toBe('in 12 days');
-    expect(formatDaysUntil(97)).toBe('in about 3 months');
+    expect(formatDaysUntil(0)).toBe('erschienen');
+    expect(formatDaysUntil(1)).toBe('morgen');
+    expect(formatDaysUntil(12)).toBe('in 12 Tagen');
+    expect(formatDaysUntil(97)).toBe('in etwa 3 Monaten');
   });
 });
 
@@ -204,8 +204,9 @@ describe('deckBudget', () => {
   });
 
   it('formats euros', () => {
-    expect(formatEuro(2550)).toBe('€25.50');
-    expect(formatEuro(0)).toBe('€0.00');
+    // German locale: comma decimals, symbol last, non-breaking space before it.
+    expect(formatEuro(2550).replace(/\u00a0/g, ' ')).toBe('25,50 €');
+    expect(formatEuro(0).replace(/\u00a0/g, ' ')).toBe('0,00 €');
   });
 });
 

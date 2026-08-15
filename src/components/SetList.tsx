@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { AVAILABILITY_LABELS, PRODUCT_LABELS } from '../lib/setClassification';
 import { formatEuro } from '../lib/pricing';
+import { displayName } from '../lib/dataset';
 import type { SetCoverage } from '../lib/setFinder';
 import { Filters, type FilterState } from './Filters';
 
@@ -22,11 +23,11 @@ export function SetList({ coverage, totalNeeded, filters, onFiltersChange }: Pro
 
   return (
     <section className="panel">
-      <h2>Sets covering your deck</h2>
+      <h2>Sets für dein Deck</h2>
       <Filters value={filters} onChange={onFiltersChange} />
 
       {coverage.length === 0 ? (
-        <p className="empty">No set matches these filters.</p>
+        <p className="empty">Kein Set passt zu diesen Filtern.</p>
       ) : (
         <>
           {visible.map((entry) => {
@@ -40,7 +41,7 @@ export function SetList({ coverage, totalNeeded, filters, onFiltersChange }: Pro
               >
                 <div className="cover">
                   <b>{entry.distinctCards}</b>
-                  <span>of {totalNeeded}</span>
+                  <span>von {totalNeeded}</span>
                 </div>
 
                 <div>
@@ -52,7 +53,7 @@ export function SetList({ coverage, totalNeeded, filters, onFiltersChange }: Pro
                       {PRODUCT_LABELS[entry.set.product]}
                     </span>
                     <span>{AVAILABILITY_LABELS[entry.availability]}</span>
-                    {entry.valueCents > 0 && <span>· {formatEuro(entry.valueCents)} of singles</span>}
+                    {entry.valueCents > 0 && <span>· {formatEuro(entry.valueCents)} an Einzelkarten</span>}
                   </div>
                 </div>
 
@@ -61,14 +62,14 @@ export function SetList({ coverage, totalNeeded, filters, onFiltersChange }: Pro
                     {entry.cards.map((covered) => (
                       <div className="line" key={covered.card.id}>
                         <span>
-                          {covered.needed}x {covered.card.name}
+                          {covered.needed}x {displayName(covered.card)}
                         </span>
                         <span className="rarity">{covered.rarities.join(', ')}</span>
                       </div>
                     ))}
                     {!entry.set.guaranteed && (
                       <p className="muted" style={{ margin: '8px 0 0' }}>
-                        Random contents — a chance at these cards, not a guarantee.
+                        Zufallsinhalt — eine Chance auf diese Karten, keine Garantie.
                       </p>
                     )}
                   </div>
@@ -80,7 +81,7 @@ export function SetList({ coverage, totalNeeded, filters, onFiltersChange }: Pro
           {coverage.length > INITIAL_VISIBLE && (
             <div className="row">
               <button className="link" onClick={() => setShowAll(!showAll)}>
-                {showAll ? 'Show fewer' : `Show all ${coverage.length} sets`}
+                {showAll ? 'Weniger zeigen' : `Alle ${coverage.length} Sets zeigen`}
               </button>
             </div>
           )}

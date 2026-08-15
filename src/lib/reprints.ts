@@ -72,9 +72,9 @@ export function waitWarnings(needs: CardNeed[], now: Date = new Date()): Reprint
 }
 
 export function formatDaysUntil(days: number): string {
-  if (days <= 0) return 'released';
-  if (days === 1) return 'tomorrow';
-  if (days < 31) return `in ${days} days`;
+  if (days <= 0) return 'erschienen';
+  if (days === 1) return 'morgen';
+  if (days < 31) return `in ${days} Tagen`;
   const months = Math.round(days / 30);
-  return months <= 1 ? 'in about a month' : `in about ${months} months`;
+  return months <= 1 ? 'in etwa einem Monat' : `in etwa ${months} Monaten`;
 }

@@ -11,6 +11,7 @@ import {
   suggestDeckName,
   type SavedDeck,
 } from '../src/lib/library';
+import { displayName } from '../src/lib/dataset';
 import { extractCard } from '../src/lib/scan';
 import { deckNeeds } from '../src/lib/setFinder';
 import { cardNamed, miniDatabase, NOW } from './helpers';
@@ -41,7 +42,7 @@ describe('library storage', () => {
   });
 
   it('falls back to a placeholder for a blank name', () => {
-    expect(addDeck([], '   ', 'ydke://a!!!', NOW)[0]?.name).toBe('Unnamed deck');
+    expect(addDeck([], '   ', 'ydke://a!!!', NOW)[0]?.name).toBe('Unbenanntes Deck');
   });
 
   it('removes and renames by id', () => {
@@ -126,31 +127,31 @@ describe('applyScannedCard', () => {
   it('ignores a card the deck does not ask for', () => {
     const outcome = applyScannedCard(deckNeeds(DECK), new Map(), notInDeck);
     expect(outcome.owned).toBeNull();
-    expect(outcome.message).toMatch(/not in this deck, ignored/);
+    expect(outcome.message).toMatch(/nicht in diesem Deck, ignoriert/);
   });
 
   it('collects the others when asked to', () => {
     const owned = new Map([[notInDeck.id, 2]]);
     const outcome = applyScannedCard(deckNeeds(DECK, owned), owned, notInDeck, { keepOthers: true });
     expect(outcome.owned).toBe(3);
-    expect(outcome.message).toMatch(/added to collection/);
+    expect(outcome.message).toMatch(/zur Sammlung/);
   });
 
   it('does not stack copies past what the deck needs', () => {
     const owned = new Map([[inDeck.id, 2]]);
     const outcome = applyScannedCard(deckNeeds(DECK, owned), owned, inDeck);
     expect(outcome.owned).toBeNull();
-    expect(outcome.message).toMatch(/already have all 2/);
+    expect(outcome.message).toMatch(/hast schon alle 2/);
   });
 });
 
 describe('suggestDeckName', () => {
   it('names a deck after its most expensive main deck card', () => {
-    expect(suggestDeckName(DECK)).toBe('Pot of Prosperity deck');
+    expect(suggestDeckName(DECK)).toBe('Pot of Prosperity-Deck');
   });
 
   it('handles an empty deck', () => {
-    expect(suggestDeckName(parseYdk('', db))).toBe('New deck');
+    expect(suggestDeckName(parseYdk('', db))).toBe('Neues Deck');
   });
 });
 
@@ -190,5 +191,40 @@ describe('saved deck round trip', () => {
       deck.entries.map((entry) => `${entry.section}:${entry.card.name}:${entry.copies}`).sort();
     expect(asPairs(restored)).toEqual(asPairs(DECK));
     expect(restored.unresolved).toEqual([]);
+  });
+});
+
+describe('german card names', () => {
+  it('shows the german name when there is one', () => {
+    expect(displayName(cardNamed(db, 'Ash Blossom & Joyous Spring'))).toBe('Aschenblüte & Freudiger Frühling');
+  });
+
+  it('falls back to english for cards with no german entry', () => {
+    const pot = cardNamed(db, 'Pot of Prosperity');
+    expect(pot.nameDe).toBeNull();
+    expect(displayName(pot)).toBe('Pot of Prosperity');
+  });
+
+  it('accepts a decklist typed in either language, or mixed', () => {
+    const deck = parseTextList(
+      ['3 Aschenblüte & Freudiger Frühling', '2 Vom Grab gerufen', '1 Pot of Prosperity'].join('\n'),
+      db,
+    );
+    expect(deck.unresolved).toEqual([]);
+    const copies = Object.fromEntries(deck.entries.map((entry) => [entry.card.name, entry.copies]));
+    expect(copies).toEqual({
+      'Ash Blossom & Joyous Spring': 3,
+      'Called by the Grave': 2,
+      'Pot of Prosperity': 1,
+    });
+  });
+
+  it('resolves a german name with different punctuation and case', () => {
+    expect(parseTextList('1 cyber drache', db).entries[0]?.card.name).toBe('Cyber Dragon');
+    expect(parseTextList('1 CYBER-DRACHE', db).entries[0]?.card.name).toBe('Cyber Dragon');
+  });
+
+  it('ignores german entries whose passcode is not in the english dump', () => {
+    expect(db.byName.has('kartediieesnichtgibt')).toBe(false);
   });
 });

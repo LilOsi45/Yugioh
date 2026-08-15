@@ -18,9 +18,9 @@ export function DeckLibrary({ library, db, collection, onBuild, onOpen, onRemove
   if (library.length === 0) {
     return (
       <section className="panel">
-        <h2>Saved decks</h2>
+        <h2>Gespeicherte Decks</h2>
         <p className="empty">
-          No decks saved yet. Paste a deck under <strong>Analyse</strong> and hit <strong>Save deck</strong>.
+          Noch keine Decks. Unter <strong>Analyse</strong> ein Deck einfügen und <strong>Deck speichern</strong> tippen.
         </p>
       </section>
     );
@@ -28,7 +28,7 @@ export function DeckLibrary({ library, db, collection, onBuild, onOpen, onRemove
 
   return (
     <section className="panel">
-      <h2>Saved decks</h2>
+      <h2>Gespeicherte Decks</h2>
       {library.map((saved) => {
         const deck = parseDeck(saved.ydke, db);
         const progress = deckProgress(deckNeeds(deck, collection));
@@ -40,37 +40,37 @@ export function DeckLibrary({ library, db, collection, onBuild, onOpen, onRemove
               <div className="saved-head">
                 <span className="name">{saved.name}</span>
                 <span className={progress.complete ? 'badge guaranteed' : 'badge'}>
-                  {progress.complete ? 'complete' : `${progress.missingCards} missing`}
+                  {progress.complete ? 'vollständig' : `${progress.missingCards} fehlen`}
                 </span>
               </div>
               <div className="bar">
                 <div className="fill" style={{ width: `${percent}%` }} />
               </div>
               <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>
-                {progress.owned} of {progress.required} copies owned · {percent}%
-                {!progress.complete && ' · tap to build'}
+                {progress.owned} von {progress.required} Kopien · {percent}%
+                {!progress.complete && ' · antippen zum Bauen'}
               </div>
             </button>
             <div className="row" style={{ marginTop: 6 }}>
               <button className="link" onClick={() => onOpen(saved)}>
-                Analyse
+                Analysieren
               </button>
               <button
                 className="link"
                 onClick={() => {
-                  const name = globalThis.prompt('Deck name', saved.name);
+                  const name = globalThis.prompt('Deckname', saved.name);
                   if (name) onRename(saved.id, name);
                 }}
               >
-                Rename
+                Umbenennen
               </button>
               <button
                 className="link"
                 onClick={() => {
-                  if (globalThis.confirm(`Delete "${saved.name}"?`)) onRemove(saved.id);
+                  if (globalThis.confirm(`"${saved.name}" löschen?`)) onRemove(saved.id);
                 }}
               >
-                Delete
+                Löschen
               </button>
             </div>
           </div>

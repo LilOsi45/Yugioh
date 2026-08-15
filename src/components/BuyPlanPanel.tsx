@@ -1,6 +1,7 @@
 import type { BuyPlan } from '../lib/buyPlan';
 import { PRODUCT_LABELS } from '../lib/setClassification';
 import { formatEuro } from '../lib/pricing';
+import { displayName } from '../lib/dataset';
 
 interface Props {
   plan: BuyPlan;
@@ -14,9 +15,9 @@ export function BuyPlanPanel({ plan }: Props) {
   if (plan.steps.length === 0) {
     return (
       <section className="panel plan">
-        <h2>What to buy</h2>
+        <h2>Was kaufen</h2>
         <p className="empty">
-          No sealed product covers what you are missing — these have to be bought as singles.
+          Kein Produkt deckt deine fehlenden Karten ab — die musst du einzeln kaufen.
         </p>
       </section>
     );
@@ -24,14 +25,14 @@ export function BuyPlanPanel({ plan }: Props) {
 
   return (
     <section className="panel plan">
-      <h2>What to buy</h2>
+      <h2>Was kaufen</h2>
       <p className="headline">
         <strong>
-          {plan.steps.length} {plan.steps.length === 1 ? 'product' : 'products'}
+          {plan.steps.length} {plan.steps.length === 1 ? 'Produkt' : 'Produkte'}
         </strong>{' '}
-        {plan.steps.length === 1 ? 'covers' : 'cover'} <strong>{plan.coveredCards}</strong> of your{' '}
-        {plan.totalCards} missing cards
-        {plan.valueCents > 0 && <> — {formatEuro(plan.valueCents)} worth of singles</>}
+        {plan.steps.length === 1 ? 'deckt' : 'decken'} <strong>{plan.coveredCards}</strong> deiner{' '}
+        {plan.totalCards} fehlenden Karten ab
+        {plan.valueCents > 0 && <> — {formatEuro(plan.valueCents)} an Einzelkarten</>}
       </p>
 
       {plan.steps.map((step, index) => (
@@ -42,10 +43,10 @@ export function BuyPlanPanel({ plan }: Props) {
               {step.set.name} <span className="muted">{step.set.code}</span>
             </div>
             <div className="gain">
-              +{step.newCards.length} cards ({step.newCopies} copies)
+              +{step.newCards.length} Karten ({step.newCopies} Kopien)
             </div>
             <div className="cards">
-              {PRODUCT_LABELS[step.set.product]} · {step.newCards.map((covered) => covered.card.name).join(', ')}
+              {PRODUCT_LABELS[step.set.product]} · {step.newCards.map((covered) => displayName(covered.card)).join(', ')}
             </div>
           </div>
         </div>
@@ -57,9 +58,9 @@ export function BuyPlanPanel({ plan }: Props) {
             +
           </div>
           <div>
-            <div className="name">Buy as singles</div>
+            <div className="name">Einzeln kaufen</div>
             <div className="cards">
-              {plan.remaining.map((need) => `${need.needed}x ${need.card.name}`).join(', ')}
+              {plan.remaining.map((need) => `${need.needed}x ${displayName(need.card)}`).join(', ')}
             </div>
           </div>
         </div>

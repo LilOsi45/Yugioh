@@ -46,11 +46,21 @@ export function decodeDatabase(raw: RawDatabase): Database {
       printings.push({ set, rarity: raw.rarities[rarityIndex] ?? 'Unknown' });
     }
     const type = raw.types[typeIndex] ?? 'Unknown';
-    const card: Card = { id, name, type, priceCents, printings, extraDeck: isExtraDeckType(type) };
+    const card: Card = { id, name, nameDe: null, type, priceCents, printings, extraDeck: isExtraDeckType(type) };
     byPasscode.set(id, card);
     byName.set(normalizeName(name), card);
     return card;
   });
+
+  // German names are additional keys into the same cards, so a decklist typed in
+  // either language resolves. The English key stays, it is never overwritten.
+  for (const [cardIndex, germanName] of raw.de ?? []) {
+    const card = cards[cardIndex];
+    if (!card) continue;
+    card.nameDe = germanName;
+    const key = normalizeName(germanName);
+    if (!byName.has(key)) byName.set(key, card);
+  }
 
   for (const [passcode, cardIndex] of raw.aliases) {
     const card = cards[cardIndex];
@@ -59,6 +69,11 @@ export function decodeDatabase(raw: RawDatabase): Database {
   }
 
   return { generated: raw.generated, sets, cards, byPasscode, byName };
+}
+
+/** What to show the user: the German name when we have one. */
+export function displayName(card: Card): string {
+  return card.nameDe ?? card.name;
 }
 
 export const DATA_URL = 'data/db.json';

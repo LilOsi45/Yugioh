@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { formatEuro } from '../lib/pricing';
+import { displayName } from '../lib/dataset';
 import { CardSearch } from './CardSearch';
 import { Scanner } from './Scanner';
 import type { Collection } from '../lib/collection';
@@ -27,33 +28,33 @@ export function CollectionPanel({ db, collection, onOwnedChange, onReset, onImpo
   function addCard(card: Card): string {
     const owned = (collection.get(card.id) ?? 0) + 1;
     onOwnedChange(card.id, owned);
-    return `${card.name} — now ${owned}`;
+    return `${displayName(card)} — jetzt ${owned}`;
   }
 
   return (
     <>
       <section className="panel">
-        <h2>Your collection</h2>
+        <h2>Deine Sammlung</h2>
         <p className="muted" style={{ fontSize: 13, margin: '0 0 10px' }}>
-          {entries.length} cards · {copies} copies · {formatEuro(valueCents)}
+          {entries.length} Karten · {copies} Kopien · {formatEuro(valueCents)}
         </p>
 
         {!scanning && (
           <div className="row" style={{ marginTop: 0 }}>
             <button className="primary" onClick={() => setScanning(true)}>
-              Scan cards
+              Karten scannen
             </button>
             <button className="link" onClick={onImport}>
-              Import .ydk
+              .ydk importieren
             </button>
             {entries.length > 0 && (
               <button
                 className="link"
                 onClick={() => {
-                  if (globalThis.confirm('Clear the whole collection?')) onReset();
+                  if (globalThis.confirm('Ganze Sammlung löschen?')) onReset();
                 }}
               >
-                Clear
+                Leeren
               </button>
             )}
           </div>
@@ -63,22 +64,22 @@ export function CollectionPanel({ db, collection, onOwnedChange, onReset, onImpo
       {scanning && <Scanner db={db} onCard={addCard} onClose={() => setScanning(false)} />}
 
       <section className="panel">
-        <h2>Add by name</h2>
+        <h2>Nach Name hinzufügen</h2>
         <CardSearch db={db} onPick={addCard} />
       </section>
 
       <section className="panel">
-        <h2>Cards you own</h2>
+        <h2>Deine Karten</h2>
         {entries.length === 0 ? (
-          <p className="empty">Nothing yet. Scan a card or add one by name.</p>
+          <p className="empty">Noch nichts da. Karte scannen oder nach Name hinzufügen.</p>
         ) : (
           entries.map((entry) => (
             <div className="line" key={entry.id}>
               <span>
-                {entry.card.name}
+                {displayName(entry.card)}
                 <br />
                 <span className="muted" style={{ fontSize: 12.5 }}>
-                  {entry.card.priceCents > 0 ? formatEuro(entry.card.priceCents) : 'no price'} each
+                  je {entry.card.priceCents > 0 ? formatEuro(entry.card.priceCents) : 'kein Preis'}
                 </span>
               </span>
               <span className="num">

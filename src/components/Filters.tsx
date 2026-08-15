@@ -15,10 +15,10 @@ export const DEFAULT_FILTERS: FilterState = {
 };
 
 const OPTIONS: { key: keyof FilterState; label: string; hint: string }[] = [
-  { key: 'guaranteedOnly', label: 'Guaranteed only', hint: 'Hide boosters, where contents are random' },
-  { key: 'includeOutOfPrint', label: 'Out of print', hint: 'Also show sets older than four years' },
-  { key: 'includeUnreleased', label: 'Unreleased', hint: 'Also show sets that are announced but not out' },
-  { key: 'includeSide', label: 'Side deck', hint: 'Count side deck copies as needed' },
+  { key: 'guaranteedOnly', label: 'Nur garantiert', hint: 'Booster ausblenden — dort ist der Inhalt Zufall' },
+  { key: 'includeOutOfPrint', label: 'Vergriffen', hint: 'Auch Sets zeigen, die älter als vier Jahre sind' },
+  { key: 'includeUnreleased', label: 'Unveröffentlicht', hint: 'Auch angekündigte, noch nicht erschienene Sets zeigen' },
+  { key: 'includeSide', label: 'Side Deck', hint: 'Side-Deck-Kopien mitzählen' },
 ];
 
 interface Props {

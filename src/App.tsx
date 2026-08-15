@@ -92,7 +92,7 @@ export function App() {
 
   function saveCurrentDeck() {
     if (!deck || deck.entries.length === 0) return;
-    const name = globalThis.prompt('Name this deck', suggestDeckName(deck));
+    const name = globalThis.prompt('Deck benennen', suggestDeckName(deck));
     if (!name) return;
     updateLibrary(addDeck(library, name, toYdke(deck)));
     setSaved(true);
@@ -166,15 +166,15 @@ export function App() {
     <main>
       <header className="app">
         <h1>YGO Set Finder</h1>
-        {db && <span className="meta">data {db.generated.slice(0, 10)}</span>}
+        {db && <span className="meta">Stand {db.generated.slice(0, 10)}</span>}
       </header>
 
       {dbError && (
         <div className="notice error">
-          <strong>Card data missing.</strong> Run <code>npm run fetch-data</code>, then reload.
+          <strong>Kartendaten fehlen.</strong> <code>npm run fetch-data</code> ausführen und neu laden.
         </div>
       )}
-      {!db && !dbError && <p className="empty">Loading card data…</p>}
+      {!db && !dbError && <p className="empty">Lade Kartendaten…</p>}
 
       {db && (
         <Tabs
@@ -201,25 +201,38 @@ export function App() {
           ) : (
             analysis && (
               <div className="deckbar">
-                <strong>{countCards(deck)} cards</strong>
+                <strong>{countCards(deck)} Karten</strong>
                 <span className="sep">·</span>
-                <span className="muted">{analysis.outstanding.length} missing</span>
+                <span className="muted">{analysis.outstanding.length} fehlen</span>
                 <span className="sep">·</span>
                 <span className="muted">{formatEuro(analysis.budget.missingCents)}</span>
                 <button className="link" style={{ marginLeft: 'auto' }} onClick={saveCurrentDeck}>
-                  {saved ? 'Saved ✓' : 'Save deck'}
+                  {saved ? 'Gespeichert ✓' : 'Deck speichern'}
                 </button>
                 <button className="link" onClick={() => setEditing(true)}>
-                  Change
+                  Ändern
                 </button>
                 <button className="link" onClick={() => void copyShareLink()}>
-                  {copied ? 'Copied' : 'Share'}
+                  {copied ? 'Kopiert' : 'Teilen'}
                 </button>
                 <button className="link" onClick={clear}>
-                  Clear
+                  Leeren
                 </button>
               </div>
             )
+          )}
+
+          {/* Folding the import box away hid this warning at exactly the moment it
+              matters: right after an import where lines failed to resolve. */}
+          {!editing && deck && deck.unresolved.length > 0 && (
+            <div className="notice">
+              <strong>{deck.unresolved.length} Zeile(n) nicht erkannt</strong> und übersprungen:{' '}
+              <span className="muted">{deck.unresolved.slice(0, 4).join(' · ')}</span>
+              {deck.unresolved.length > 4 && <span className="muted"> …</span>}{' '}
+              <button className="link" onClick={() => setEditing(true)}>
+                korrigieren
+              </button>
+            </div>
           )}
 
           {deck && analysis && (
@@ -282,7 +295,7 @@ export function App() {
       )}
 
       <footer className="app">
-        Card data from <a href="https://ygoprodeck.com/api-guide/">YGOPRODeck</a>. Cardmarket prices are estimates.
+        Kartendaten von <a href="https://ygoprodeck.com/api-guide/">YGOPRODeck</a>. Cardmarket-Preise sind Schätzwerte.
       </footer>
     </main>
   );

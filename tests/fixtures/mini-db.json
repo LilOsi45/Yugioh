@@ -1,112 +1,328 @@
 {
-  "_comment": "Hand-written stand-in for the YGOPRODeck API responses, shaped exactly like cardsets.php and cardinfo.php. Lets the whole pipeline be tested without network access. Dates are chosen relative to the frozen NOW used in tests (2026-08-15).",
+  "_comment": "Hand-written stand-in for the YGOPRODeck API responses, shaped exactly like cardsets.php and cardinfo.php. Lets the whole pipeline be tested without network access. Dates are chosen relative to the frozen NOW used in tests (2026-08-15). germanCards mirrors cardinfo.php?language=de: same passcodes, fewer cards.",
   "sets": [
-    { "set_name": "Structure Deck: Cyber Strike", "set_code": "SDCS", "num_of_cards": 42, "tcg_date": "2021-06-24" },
-    { "set_name": "Structure Deck R: Machine Reactor", "set_code": "SR03", "num_of_cards": 41, "tcg_date": "2025-09-12" },
-    { "set_name": "Legacy of Destruction", "set_code": "LEDE", "num_of_cards": 100, "tcg_date": "2024-04-18" },
-    { "set_name": "Phantom Nightmare", "set_code": "PHNI", "num_of_cards": 100, "tcg_date": "2026-02-08" },
-    { "set_name": "OTS Tournament Pack 27", "set_code": "OP27", "num_of_cards": 26, "tcg_date": "2025-11-03" },
-    { "set_name": "Reprint Showcase 2026", "set_code": "RS26", "num_of_cards": 60, "tcg_date": "2026-11-20" }
+    {
+      "set_name": "Structure Deck: Cyber Strike",
+      "set_code": "SDCS",
+      "num_of_cards": 42,
+      "tcg_date": "2021-06-24"
+    },
+    {
+      "set_name": "Structure Deck R: Machine Reactor",
+      "set_code": "SR03",
+      "num_of_cards": 41,
+      "tcg_date": "2025-09-12"
+    },
+    {
+      "set_name": "Legacy of Destruction",
+      "set_code": "LEDE",
+      "num_of_cards": 100,
+      "tcg_date": "2024-04-18"
+    },
+    {
+      "set_name": "Phantom Nightmare",
+      "set_code": "PHNI",
+      "num_of_cards": 100,
+      "tcg_date": "2026-02-08"
+    },
+    {
+      "set_name": "OTS Tournament Pack 27",
+      "set_code": "OP27",
+      "num_of_cards": 26,
+      "tcg_date": "2025-11-03"
+    },
+    {
+      "set_name": "Reprint Showcase 2026",
+      "set_code": "RS26",
+      "num_of_cards": 60,
+      "tcg_date": "2026-11-20"
+    }
   ],
   "cards": [
     {
       "id": 14558127,
       "name": "Ash Blossom & Joyous Spring",
       "type": "Effect Monster",
-      "card_prices": [{ "cardmarket_price": "8.50" }],
-      "card_images": [{ "id": 14558127 }, { "id": 14558128 }],
+      "card_prices": [
+        {
+          "cardmarket_price": "8.50"
+        }
+      ],
+      "card_images": [
+        {
+          "id": 14558127
+        },
+        {
+          "id": 14558128
+        }
+      ],
       "card_sets": [
-        { "set_name": "Phantom Nightmare", "set_code": "PHNI-EN087", "set_rarity": "Ultra Rare" },
-        { "set_name": "OTS Tournament Pack 27", "set_code": "OP27-EN002", "set_rarity": "Common" },
-        { "set_name": "Reprint Showcase 2026", "set_code": "RS26-EN011", "set_rarity": "Secret Rare" }
+        {
+          "set_name": "Phantom Nightmare",
+          "set_code": "PHNI-EN087",
+          "set_rarity": "Ultra Rare"
+        },
+        {
+          "set_name": "OTS Tournament Pack 27",
+          "set_code": "OP27-EN002",
+          "set_rarity": "Common"
+        },
+        {
+          "set_name": "Reprint Showcase 2026",
+          "set_code": "RS26-EN011",
+          "set_rarity": "Secret Rare"
+        }
       ]
     },
     {
       "id": 97268402,
       "name": "Effect Veiler",
       "type": "Tuner Monster",
-      "card_prices": [{ "cardmarket_price": "1.20" }],
-      "card_images": [{ "id": 97268402 }],
+      "card_prices": [
+        {
+          "cardmarket_price": "1.20"
+        }
+      ],
+      "card_images": [
+        {
+          "id": 97268402
+        }
+      ],
       "card_sets": [
-        { "set_name": "Structure Deck R: Machine Reactor", "set_code": "SR03-EN018", "set_rarity": "Common" },
-        { "set_name": "Reprint Showcase 2026", "set_code": "RS26-EN012", "set_rarity": "Common" }
+        {
+          "set_name": "Structure Deck R: Machine Reactor",
+          "set_code": "SR03-EN018",
+          "set_rarity": "Common"
+        },
+        {
+          "set_name": "Reprint Showcase 2026",
+          "set_code": "RS26-EN012",
+          "set_rarity": "Common"
+        }
       ]
     },
     {
       "id": 70095154,
       "name": "Cyber Dragon",
       "type": "Effect Monster",
-      "card_prices": [{ "cardmarket_price": "0.30" }],
-      "card_images": [{ "id": 70095154 }],
+      "card_prices": [
+        {
+          "cardmarket_price": "0.30"
+        }
+      ],
+      "card_images": [
+        {
+          "id": 70095154
+        }
+      ],
       "card_sets": [
-        { "set_name": "Structure Deck: Cyber Strike", "set_code": "SDCS-EN001", "set_rarity": "Common" },
-        { "set_name": "Phantom Nightmare", "set_code": "PHNI-EN090", "set_rarity": "Rare" }
+        {
+          "set_name": "Structure Deck: Cyber Strike",
+          "set_code": "SDCS-EN001",
+          "set_rarity": "Common"
+        },
+        {
+          "set_name": "Phantom Nightmare",
+          "set_code": "PHNI-EN090",
+          "set_rarity": "Rare"
+        }
       ]
     },
     {
       "id": 10045474,
       "name": "Infinite Impermanence",
       "type": "Trap Card",
-      "card_prices": [{ "cardmarket_price": "12.00" }],
-      "card_images": [{ "id": 10045474 }],
+      "card_prices": [
+        {
+          "cardmarket_price": "12.00"
+        }
+      ],
+      "card_images": [
+        {
+          "id": 10045474
+        }
+      ],
       "card_sets": [
-        { "set_name": "Legacy of Destruction", "set_code": "LEDE-EN077", "set_rarity": "Secret Rare" },
-        { "set_name": "Structure Deck: Cyber Strike", "set_code": "SDCS-EN039", "set_rarity": "Common" }
+        {
+          "set_name": "Legacy of Destruction",
+          "set_code": "LEDE-EN077",
+          "set_rarity": "Secret Rare"
+        },
+        {
+          "set_name": "Structure Deck: Cyber Strike",
+          "set_code": "SDCS-EN039",
+          "set_rarity": "Common"
+        }
       ]
     },
     {
       "id": 24224830,
       "name": "Called by the Grave",
       "type": "Spell Card",
-      "card_prices": [{ "cardmarket_price": "2.10" }],
-      "card_images": [{ "id": 24224830 }],
+      "card_prices": [
+        {
+          "cardmarket_price": "2.10"
+        }
+      ],
+      "card_images": [
+        {
+          "id": 24224830
+        }
+      ],
       "card_sets": [
-        { "set_name": "Structure Deck R: Machine Reactor", "set_code": "SR03-EN031", "set_rarity": "Common" },
-        { "set_name": "Legacy of Destruction", "set_code": "LEDE-EN061", "set_rarity": "Common" }
+        {
+          "set_name": "Structure Deck R: Machine Reactor",
+          "set_code": "SR03-EN031",
+          "set_rarity": "Common"
+        },
+        {
+          "set_name": "Legacy of Destruction",
+          "set_code": "LEDE-EN061",
+          "set_rarity": "Common"
+        }
       ]
     },
     {
       "id": 84211599,
       "name": "Pot of Prosperity",
       "type": "Spell Card",
-      "card_prices": [{ "cardmarket_price": "22.00" }],
-      "card_images": [{ "id": 84211599 }],
-      "card_sets": [{ "set_name": "Legacy of Destruction", "set_code": "LEDE-EN062", "set_rarity": "Ultra Rare" }]
+      "card_prices": [
+        {
+          "cardmarket_price": "22.00"
+        }
+      ],
+      "card_images": [
+        {
+          "id": 84211599
+        }
+      ],
+      "card_sets": [
+        {
+          "set_name": "Legacy of Destruction",
+          "set_code": "LEDE-EN062",
+          "set_rarity": "Ultra Rare"
+        }
+      ]
     },
     {
       "id": 46986414,
       "name": "Dark Magician",
       "type": "Normal Monster",
-      "card_prices": [{ "cardmarket_price": "0.40" }],
-      "card_images": [{ "id": 46986414 }, { "id": 46986415 }],
+      "card_prices": [
+        {
+          "cardmarket_price": "0.40"
+        }
+      ],
+      "card_images": [
+        {
+          "id": 46986414
+        },
+        {
+          "id": 46986415
+        }
+      ],
       "card_sets": [
-        { "set_name": "Structure Deck: Cyber Strike", "set_code": "SDCS-EN002", "set_rarity": "Common" },
-        { "set_name": "Structure Deck: Cyber Strike", "set_code": "SDCS-EN002", "set_rarity": "Common" }
+        {
+          "set_name": "Structure Deck: Cyber Strike",
+          "set_code": "SDCS-EN002",
+          "set_rarity": "Common"
+        },
+        {
+          "set_name": "Structure Deck: Cyber Strike",
+          "set_code": "SDCS-EN002",
+          "set_rarity": "Common"
+        }
       ]
     },
     {
       "id": 10443957,
       "name": "Cyber Dragon Infinity",
       "type": "XYZ Monster",
-      "card_prices": [{ "cardmarket_price": "5.00" }],
-      "card_images": [{ "id": 10443957 }],
-      "card_sets": [{ "set_name": "Structure Deck: Cyber Strike", "set_code": "SDCS-EN040", "set_rarity": "Ultra Rare" }]
+      "card_prices": [
+        {
+          "cardmarket_price": "5.00"
+        }
+      ],
+      "card_images": [
+        {
+          "id": 10443957
+        }
+      ],
+      "card_sets": [
+        {
+          "set_name": "Structure Deck: Cyber Strike",
+          "set_code": "SDCS-EN040",
+          "set_rarity": "Ultra Rare"
+        }
+      ]
     },
     {
       "id": 86066372,
       "name": "Accesscode Talker",
       "type": "Link Monster",
-      "card_prices": [{ "cardmarket_price": "9.00" }],
-      "card_images": [{ "id": 86066372 }],
-      "card_sets": [{ "set_name": "Phantom Nightmare", "set_code": "PHNI-EN095", "set_rarity": "Ultra Rare" }]
+      "card_prices": [
+        {
+          "cardmarket_price": "9.00"
+        }
+      ],
+      "card_images": [
+        {
+          "id": 86066372
+        }
+      ],
+      "card_sets": [
+        {
+          "set_name": "Phantom Nightmare",
+          "set_code": "PHNI-EN095",
+          "set_rarity": "Ultra Rare"
+        }
+      ]
     },
     {
       "id": 25311006,
       "name": "Triple Tactics Talent",
       "type": "Spell Card",
-      "card_prices": [{ "cardmarket_price": "0" }],
-      "card_images": [{ "id": 25311006 }],
+      "card_prices": [
+        {
+          "cardmarket_price": "0"
+        }
+      ],
+      "card_images": [
+        {
+          "id": 25311006
+        }
+      ],
       "card_sets": []
+    }
+  ],
+  "germanCards": [
+    {
+      "id": 14558127,
+      "name": "Aschenblüte & Freudiger Frühling"
+    },
+    {
+      "id": 97268402,
+      "name": "Effektverschleierer"
+    },
+    {
+      "id": 70095154,
+      "name": "Cyber-Drache"
+    },
+    {
+      "id": 10045474,
+      "name": "Unendliche Unantastbarkeit"
+    },
+    {
+      "id": 24224830,
+      "name": "Vom Grab gerufen"
+    },
+    {
+      "id": 46986414,
+      "name": "Dunkler Magier"
+    },
+    {
+      "id": 99999999,
+      "name": "Karte die es nicht gibt"
     }
   ]
 }
