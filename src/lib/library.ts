@@ -1,5 +1,5 @@
 import { displayName } from './dataset';
-import type { Card, Deck } from './types';
+import type { Card, Deck, DeckSection } from './types';
 import type { CardNeed } from './setFinder';
 
 /**
@@ -160,6 +160,37 @@ export function applyScannedCard(
 
   const owned = need.owned + 1;
   return { message: `${displayName(card)} ${owned}/${need.required} ✓`, owned };
+}
+
+export interface DeckSlot {
+  card: Card;
+  /** True when the collection covers this particular copy. */
+  owned: boolean;
+}
+
+/**
+ * One tile per physical copy, the way a decklist is actually laid out — three
+ * Lilizards are three cards, not one row saying "3x".
+ *
+ * Owned copies are allocated in a fixed order (main, then extra, then side) so a
+ * card appearing in two sections fills the main deck first, and the same deck
+ * always renders identically.
+ */
+export function deckSlots(deck: Deck, owned: ReadonlyMap<number, number> = new Map()): Record<DeckSection, DeckSlot[]> {
+  const remaining = new Map(owned);
+  const slots: Record<DeckSection, DeckSlot[]> = { main: [], extra: [], side: [] };
+
+  for (const section of ['main', 'extra', 'side'] as DeckSection[]) {
+    for (const entry of deck.entries) {
+      if (entry.section !== section) continue;
+      for (let copy = 0; copy < entry.copies; copy += 1) {
+        const left = remaining.get(entry.card.id) ?? 0;
+        if (left > 0) remaining.set(entry.card.id, left - 1);
+        slots[section].push({ card: entry.card, owned: left > 0 });
+      }
+    }
+  }
+  return slots;
 }
 
 /** A short, human name suggestion from a deck's most expensive cards. */

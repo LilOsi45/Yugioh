@@ -5,6 +5,7 @@ import { BuyPlanPanel } from './components/BuyPlanPanel';
 import { CollectionPanel } from './components/CollectionPanel';
 import { DeckLibrary } from './components/DeckLibrary';
 import { DeckList } from './components/DeckList';
+import { DeckView } from './components/DeckView';
 import { DEFAULT_FILTERS, type FilterState } from './components/Filters';
 import { ImportPanel } from './components/ImportPanel';
 import { ReprintRadar } from './components/ReprintRadar';
@@ -238,6 +239,7 @@ export function App() {
           {deck && analysis && (
             <>
               <BuyPlanPanel plan={analysis.plan} />
+              <DeckView deck={deck} collection={collection} showOwnership />
               <SetList
                 coverage={analysis.coverage}
                 totalNeeded={analysis.outstanding.length}
