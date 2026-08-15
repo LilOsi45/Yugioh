@@ -641,3 +641,13 @@ footer.app {
   font-size: 15px; /* 16px or larger stops iOS zooming the page on focus */
   margin-bottom: 4px;
 }
+
+/* The exact strip handed to the OCR engine, shown after a scan so a failure is
+   diagnosable at a glance instead of being a mystery. */
+.scanpreview {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  image-rendering: pixelated;
+  background: #fff;
+}

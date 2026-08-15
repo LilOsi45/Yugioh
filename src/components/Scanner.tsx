@@ -59,6 +59,8 @@ export function Scanner({ db, onCard, onClose }: Props) {
   const [feedback, setFeedback] = useState<string | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [attempt, setAttempt] = useState(0);
+  // What the OCR actually received. If a person cannot read this, neither can it.
+  const [preview, setPreview] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -118,25 +120,43 @@ export function Scanner({ db, onCard, onClose }: Props) {
   useEffect(() => () => void ocr.current?.stop(), []);
 
   async function capture() {
-    if (!video.current || status !== 'ready') return;
+    const source = video.current;
+    if (!source || status !== 'ready') return;
     setStatus('reading');
     setFeedback(null);
+    // Crop first and show it straight away: if the engine fails to load, the strip
+    // is still the most useful thing on screen for working out what went wrong.
+    const crops = [false, true].map((invert) => ({
+      invert,
+      canvas: cropRegion(source, PASSCODE_REGION, { invert }),
+    }));
+    setPreview(crops[0]!.canvas.toDataURL('image/png'));
+
     try {
       ocr.current ??= await createScanner();
-      const text = await ocr.current.read(cropRegion(video.current));
-      const card = extractCard(text, db);
-      if (card) {
-        const message = onCard(card);
-        setFeedback(message);
-        setLog((entries) => [message, ...entries].slice(0, 6));
-      } else {
-        const seen = text.replace(/\s+/g, '').slice(0, 20);
-        setFeedback(
-          seen
-            ? `Gelesen: "${seen}" — kein bekannter Passcode. Näher ran und nochmal.`
-            : 'Nichts gelesen. Halte die 8-stellige Nummer unten links in den Rahmen.',
-        );
+
+      // Two passes: dark print on light card, then inverted for the light-on-dark
+      // printing some card frames use. Whichever yields a real passcode wins.
+      const readings: string[] = [];
+      for (const { canvas } of crops) {
+        const text = await ocr.current.read(canvas);
+        readings.push(text.replace(/\s+/g, ''));
+        const card = extractCard(text, db);
+        if (card) {
+          const message = onCard(card);
+          setFeedback(message);
+          setLog((entries) => [message, ...entries].slice(0, 6));
+          setStatus('ready');
+          return;
+        }
       }
+
+      const seen = readings.filter(Boolean).join(' / ').slice(0, 30);
+      setFeedback(
+        seen
+          ? `Gelesen: "${seen}" — kein bekannter Passcode. Näher ran, mehr Licht.`
+          : 'Nichts erkannt. Der Ausschnitt unten zeigt, was die Erkennung bekommen hat.',
+      );
       setStatus('ready');
     } catch (readError) {
       setStatus('error');
@@ -156,6 +176,7 @@ export function Scanner({ db, onCard, onClose }: Props) {
           <p className="muted" style={{ fontSize: 12, margin: '8px 0 0' }}>
             {diagnostics()}
           </p>
+          {preview && <img className="scanpreview" src={preview} alt="Ausschnitt der letzten Aufnahme" />}
           <div className="row">
             <button className="primary" onClick={() => setAttempt((value) => value + 1)}>
               Nochmal versuchen
@@ -180,7 +201,7 @@ export function Scanner({ db, onCard, onClose }: Props) {
           </div>
 
           <p className="muted" style={{ fontSize: 12.5, margin: '8px 0 0' }}>
-            Karte formatfüllend halten, die 8-stellige Nummer unten links muss im Kasten liegen.
+            Den Balken über die 8-stellige Nummer unten links auf der Karte halten, möglichst nah.
           </p>
 
           <div className="row">
@@ -191,6 +212,15 @@ export function Scanner({ db, onCard, onClose }: Props) {
           </div>
 
           {feedback && <div className="notice">{feedback}</div>}
+
+          {preview && (
+            <div style={{ marginTop: 8 }}>
+              <p className="muted" style={{ fontSize: 12, margin: '0 0 4px' }}>
+                Das sieht die Erkennung:
+              </p>
+              <img className="scanpreview" src={preview} alt="Ausschnitt der letzten Aufnahme" />
+            </div>
+          )}
 
           {log.length > 1 && (
             <div style={{ marginTop: 10 }}>
