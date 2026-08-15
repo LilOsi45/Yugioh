@@ -12,7 +12,7 @@ import {
   type SavedDeck,
 } from '../src/lib/library';
 import { displayName } from '../src/lib/dataset';
-import { coverSourceRect, extractCard, otsuThreshold } from '../src/lib/scan';
+import { adaptiveThreshold, coverSourceRect, extractCard } from '../src/lib/scan';
 import { deckNeeds } from '../src/lib/setFinder';
 import { cardNamed, miniDatabase, NOW } from './helpers';
 
@@ -272,21 +272,50 @@ describe('coverSourceRect', () => {
   });
 });
 
-describe('otsuThreshold', () => {
-  it('splits two brightness groups between them', () => {
-    const histogram = new Array<number>(256).fill(0);
-    histogram[30] = 500; // dark print
-    histogram[220] = 500; // light card
-    const threshold = otsuThreshold(histogram, 1000);
-    // The threshold is the last level of the dark group, so 30 itself counts as
-    // dark and must not be excluded by the comparison in preprocess().
-    expect(threshold).toBeGreaterThanOrEqual(30);
-    expect(threshold).toBeLessThan(220);
+describe('adaptiveThreshold', () => {
+  /**
+   * The layout that defeated a global threshold: a bright zone (the effect box) and
+   * a darker zone (the card border) side by side, each carrying dark print. A single
+   * cut-off turns the whole darker zone to ink and loses the passcode printed on it.
+   */
+  function twoZoneImage(width: number, height: number) {
+    const grey = new Float64Array(width * height);
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        const bright = y < height / 2;
+        grey[y * width + x] = bright ? 235 : 150; // effect box vs card border
+      }
+    }
+    // A dark mark in each zone, standing for print.
+    const mark = (cx: number, cy: number) => {
+      for (let y = cy - 2; y <= cy + 2; y += 1) {
+        for (let x = cx - 2; x <= cx + 2; x += 1) grey[y * width + x] = 30;
+      }
+    };
+    mark(20, 10);
+    mark(20, height - 10);
+    return grey;
+  }
+
+  it('keeps print in both zones as ink and both backgrounds as paper', () => {
+    const width = 80;
+    const height = 40;
+    const mask = adaptiveThreshold(twoZoneImage(width, height), width, height);
+
+    expect(mask[10 * width + 20]).toBe(0); // print in the bright zone
+    expect(mask[(height - 10) * width + 20]).toBe(0); // print in the darker zone
+    expect(mask[5 * width + 60]).toBe(255); // bright background stays paper
+    // The whole darker zone would go black under one global threshold; here it does not.
+    expect(mask[(height - 5) * width + 60]).toBe(255);
   });
 
-  it('handles an image of one flat colour', () => {
-    const histogram = new Array<number>(256).fill(0);
-    histogram[128] = 1000;
-    expect(otsuThreshold(histogram, 1000)).toBeLessThanOrEqual(128);
+  it('leaves a flat image entirely as paper', () => {
+    const grey = new Float64Array(40 * 40).fill(128);
+    const mask = adaptiveThreshold(grey, 40, 40);
+    expect([...mask].every((value) => value === 255)).toBe(true);
+  });
+
+  it('handles an empty image', () => {
+    expect(adaptiveThreshold(new Float64Array(0), 0, 0)).toHaveLength(0);
   });
 });
