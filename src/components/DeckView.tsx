@@ -3,7 +3,7 @@ import { displayName } from '../lib/dataset';
 import { CARD_ASPECT, cardImageUrl } from '../lib/images';
 import { deckSlots, type DeckSlot } from '../lib/library';
 import { formatEuro } from '../lib/pricing';
-import type { Collection } from '../lib/collection';
+import { collectionTotals, EMPTY_COLLECTION, type Collection } from '../lib/collection';
 import type { Card, Deck, DeckSection } from '../lib/types';
 
 interface Props {
@@ -45,9 +45,9 @@ function CardTile({ slot, showOwnership, onPick }: { slot: DeckSlot; showOwnersh
   );
 }
 
-export function DeckView({ deck, collection = new Map(), showOwnership = false }: Props) {
+export function DeckView({ deck, collection = EMPTY_COLLECTION, showOwnership = false }: Props) {
   const [picked, setPicked] = useState<Card | null>(null);
-  const slots = deckSlots(deck, collection);
+  const slots = deckSlots(deck, collectionTotals(collection));
 
   return (
     <section className="panel">

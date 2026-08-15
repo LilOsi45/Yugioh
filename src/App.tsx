@@ -19,7 +19,8 @@ import {
   mergeCollections,
   pruneCollection,
   saveCollection,
-  withOwned,
+  setOwnedTotal,
+  collectionTotals,
   type Collection,
 } from './lib/collection';
 import { loadDatabase } from './lib/dataset';
@@ -132,7 +133,7 @@ export function App() {
 
   const analysis = useMemo(() => {
     if (!deck) return null;
-    const needs = deckNeeds(deck, collection, { includeSide: filters.includeSide });
+    const needs = deckNeeds(deck, collectionTotals(collection), { includeSide: filters.includeSide });
     const coverageOptions = {
       guaranteedOnly: filters.guaranteedOnly,
       includeUnreleased: filters.includeUnreleased,
@@ -252,7 +253,7 @@ export function App() {
               <DeckList
                 needs={analysis.needs}
                 ownedCount={collection.size}
-                onOwnedChange={(cardId, owned) => updateCollection(withOwned(collection, cardId, owned))}
+                onOwnedChange={(cardId, owned) => updateCollection(setOwnedTotal(collection, cardId, owned))}
                 onResetCollection={() => updateCollection(EMPTY_COLLECTION)}
                 onImportCollection={() => collectionInput.current?.click()}
                 upcoming={analysis.upcoming}
@@ -268,7 +269,7 @@ export function App() {
             saved={building}
             db={db}
             collection={collection}
-            onOwnedChange={(cardId, owned) => updateCollection(withOwned(collection, cardId, owned))}
+            onChange={updateCollection}
             onBack={() => setBuilding(null)}
           />
         ) : (
@@ -289,7 +290,7 @@ export function App() {
           <CollectionPanel
             db={db}
             collection={collection}
-            onOwnedChange={(cardId, owned) => updateCollection(withOwned(collection, cardId, owned))}
+            onChange={updateCollection}
             onReset={() => updateCollection(EMPTY_COLLECTION)}
             onImport={() => collectionInput.current?.click()}
           />

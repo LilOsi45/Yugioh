@@ -127,8 +127,8 @@ export function stillMissing(needs: CardNeed[]): CardNeed[] {
 export interface ScanOutcome {
   /** Shown back to the user so they know what the scan did. */
   message: string;
-  /** New owned count to store, or null when the card is left alone. */
-  owned: number | null;
+  /** Whether one copy should be added to the collection. */
+  accepted: boolean;
 }
 
 /**
@@ -149,17 +149,16 @@ export function applyScannedCard(
   if (!need) {
     if (options.keepOthers) {
       const owned = (collection.get(card.id) ?? 0) + 1;
-      return { message: `${displayName(card)} — nicht im Deck, zur Sammlung`, owned };
+      return { message: `${displayName(card)} — nicht im Deck, zur Sammlung (${owned})`, accepted: true };
     }
-    return { message: `${displayName(card)} — nicht in diesem Deck, ignoriert`, owned: null };
+    return { message: `${displayName(card)} — nicht in diesem Deck, ignoriert`, accepted: false };
   }
 
   if (need.needed === 0) {
-    return { message: `${displayName(card)} — hast schon alle ${need.required}`, owned: null };
+    return { message: `${displayName(card)} — hast schon alle ${need.required}`, accepted: false };
   }
 
-  const owned = need.owned + 1;
-  return { message: `${displayName(card)} ${owned}/${need.required} ✓`, owned };
+  return { message: `${displayName(card)} ${need.owned + 1}/${need.required} ✓`, accepted: true };
 }
 
 export interface DeckSlot {

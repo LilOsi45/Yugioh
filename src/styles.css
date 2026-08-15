@@ -629,6 +629,24 @@ footer.app {
   box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
 }
 
+/*
+ * Confirms a hit while scanning continuously. With no button press to acknowledge,
+ * a flash is the only sign that a card went in — and it can be seen while looking
+ * at the cards rather than the screen.
+ */
+.scanview.hit::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--good);
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.struck {
+  text-decoration: line-through;
+}
+
 /* ---------- search ---------- */
 
 .search {
@@ -714,6 +732,33 @@ footer.app {
 /* A thumbnail makes a long collection scannable by artwork, not just by name. */
 .owned-row {
   align-items: center;
+  /*
+   * Fixed height, and the heading below it too: the collection list only renders
+   * the rows on screen, and it works out where they go by adding heights up. A row
+   * that grew with its content would put every later row in the wrong place.
+   */
+  height: 58px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.owned-name {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.coll-heading {
+  height: 36px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: flex-end;
+  margin: 0;
+  padding-bottom: 4px;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  gap: 5px;
 }
 
 .owned-thumb {

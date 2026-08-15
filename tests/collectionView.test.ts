@@ -4,6 +4,7 @@ import {
   CATEGORY_LABELS,
   filterEntries,
   groupByCategory,
+  groupBySet,
   sortEntries,
   type CollectionEntry,
 } from '../src/lib/collectionView';
@@ -94,6 +95,44 @@ describe('groupByCategory', () => {
   it('omits categories with nothing in them', () => {
     const groups = groupByCategory([entry('Cyber Dragon', 1)]);
     expect(groups.map((group) => group.category)).toEqual(['monster']);
+  });
+});
+
+describe('groupBySet', () => {
+  const withSets = (name: string, bySet: Record<string, number>): CollectionEntry => ({
+    card: cardNamed(db, name),
+    count: Object.values(bySet).reduce((sum, count) => sum + count, 0),
+    bySet: new Map(Object.entries(bySet)),
+  });
+
+  it('labels each group with the full set name', () => {
+    const groups = groupBySet([withSets('Ash Blossom & Joyous Spring', { PHNI: 2 })], db);
+    expect(groups.map((group) => [group.code, group.name])).toEqual([['PHNI', 'Phantom Nightmare']]);
+  });
+
+  it('shows a card in every set it is held in, with that set’s count', () => {
+    const groups = groupBySet([withSets('Ash Blossom & Joyous Spring', { PHNI: 2, OP27: 1 })], db);
+    expect(groups.map((group) => [group.code, group.entries[0]?.count])).toEqual([
+      ['OP27', 1],
+      ['PHNI', 2],
+    ]);
+  });
+
+  it('collects cards with no recorded printing at the end', () => {
+    const groups = groupBySet(
+      [entry('Cyber Dragon', 3), withSets('Ash Blossom & Joyous Spring', { PHNI: 1 })],
+      db,
+    );
+    expect(groups.map((group) => group.name)).toEqual(['Phantom Nightmare', 'Ohne Set']);
+    expect(groups.at(-1)?.entries.map((item) => item.card.name)).toEqual(['Cyber Dragon']);
+  });
+
+  it('sorts by name inside a group', () => {
+    const groups = groupBySet(
+      [withSets('Cyber Dragon', { PHNI: 1 }), withSets('Accesscode Talker', { PHNI: 1 })],
+      db,
+    );
+    expect(groups[0]?.entries.map((item) => item.card.name)).toEqual(['Accesscode Talker', 'Cyber Dragon']);
   });
 });
 

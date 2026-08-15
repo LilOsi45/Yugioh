@@ -114,34 +114,35 @@ describe('applyScannedCard', () => {
 
   it('counts a card the deck asks for', () => {
     const outcome = applyScannedCard(deckNeeds(DECK), new Map(), inDeck);
-    expect(outcome.owned).toBe(1);
+    expect(outcome.accepted).toBe(true);
     expect(outcome.message).toContain('1/2');
   });
 
   it('counts up from what is already owned', () => {
     const owned = new Map([[inDeck.id, 1]]);
     const outcome = applyScannedCard(deckNeeds(DECK, owned), owned, inDeck);
-    expect(outcome.owned).toBe(2);
+    expect(outcome.accepted).toBe(true);
     expect(outcome.message).toContain('2/2');
   });
 
   it('ignores a card the deck does not ask for', () => {
     const outcome = applyScannedCard(deckNeeds(DECK), new Map(), notInDeck);
-    expect(outcome.owned).toBeNull();
+    expect(outcome.accepted).toBe(false);
     expect(outcome.message).toMatch(/nicht in diesem Deck, ignoriert/);
   });
 
   it('collects the others when asked to', () => {
     const owned = new Map([[notInDeck.id, 2]]);
     const outcome = applyScannedCard(deckNeeds(DECK, owned), owned, notInDeck, { keepOthers: true });
-    expect(outcome.owned).toBe(3);
+    expect(outcome.accepted).toBe(true);
+    expect(outcome.message).toContain('(3)');
     expect(outcome.message).toMatch(/zur Sammlung/);
   });
 
   it('does not stack copies past what the deck needs', () => {
     const owned = new Map([[inDeck.id, 2]]);
     const outcome = applyScannedCard(deckNeeds(DECK, owned), owned, inDeck);
-    expect(outcome.owned).toBeNull();
+    expect(outcome.accepted).toBe(false);
     expect(outcome.message).toMatch(/hast schon alle 2/);
   });
 });

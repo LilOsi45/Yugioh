@@ -1,7 +1,7 @@
 import { deckProgress, type SavedDeck } from '../lib/library';
 import { parseDeck } from '../lib/import';
 import { deckNeeds } from '../lib/setFinder';
-import type { Collection } from '../lib/collection';
+import { collectionTotals, type Collection } from '../lib/collection';
 import type { Database } from '../lib/types';
 
 interface Props {
@@ -15,6 +15,8 @@ interface Props {
 }
 
 export function DeckLibrary({ library, db, collection, onBuild, onOpen, onRemove, onRename }: Props) {
+  const totals = collectionTotals(collection);
+
   if (library.length === 0) {
     return (
       <section className="panel">
@@ -31,7 +33,7 @@ export function DeckLibrary({ library, db, collection, onBuild, onOpen, onRemove
       <h2>Gespeicherte Decks</h2>
       {library.map((saved) => {
         const deck = parseDeck(saved.ydke, db);
-        const progress = deckProgress(deckNeeds(deck, collection));
+        const progress = deckProgress(deckNeeds(deck, totals));
         const percent = Math.round(progress.ratio * 100);
 
         return (
