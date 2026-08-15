@@ -36,11 +36,11 @@ jobs:
           # The full cardinfo.php dump is a large JSON body to parse.
           NODE_OPTIONS: --max-old-space-size=4096
       - run: npm run build
+      # One-time manual setup: Settings -> Pages -> Source -> "GitHub Actions".
+      # The workflow cannot do this itself — creating a Pages site is not something
+      # GITHUB_TOKEN is allowed to do ("Resource not accessible by integration"),
+      # so `enablement: true` fails here too.
       - uses: actions/configure-pages@v5
-        with:
-          # Turn Pages on from here, so setting up the site needs no visit to the
-          # repository settings.
-          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

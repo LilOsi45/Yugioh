@@ -14,6 +14,8 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildIndex, type ApiCard, type ApiSet } from '../src/lib/buildIndex';
+import { classifyAvailability, classifyProduct } from '../src/lib/setClassification';
+import type { ProductClass, RawDatabase } from '../src/lib/types';
 
 const API = 'https://db.ygoprodeck.com/api/v7';
 const OUT_FILE = resolve(dirname(fileURLToPath(import.meta.url)), '../public/data/db.json');
@@ -27,6 +29,52 @@ async function getJson<T>(url: string): Promise<T> {
     throw new Error(`${url} responded ${response.status} ${response.statusText}`);
   }
   return (await response.json()) as T;
+}
+
+/**
+ * Sets whose classification is worth watching, because they are the shapes the
+ * prefix rules in setClassification.ts are meant to tell apart. Printed on every
+ * refresh so a wrong verdict shows up in the log instead of in the UI.
+ */
+const SPOT_CHECKS: [code: string, expected: ProductClass][] = [
+  ['SDCK', 'structure'],
+  ['SR13', 'structure'],
+  ['YS18', 'boxset'],
+  ['LEDE', 'booster'],
+  ['PHNI', 'booster'],
+  ['LOB', 'booster'],
+  ['MP24', 'tin'],
+  ['OP27', 'promo'],
+];
+
+/**
+ * The card data is fetched on a runner, not on a developer's machine, so this
+ * summary in the build log is how anyone finds out whether the heuristics still
+ * hold against the real database.
+ */
+function reportOnData(index: RawDatabase): void {
+  const counts = new Map<ProductClass, number>();
+  let upcoming = 0;
+  for (const [, code, numOfCards, tcgDate] of index.sets) {
+    const product = classifyProduct(code, numOfCards);
+    counts.set(product, (counts.get(product) ?? 0) + 1);
+    if (classifyAvailability(tcgDate || null) === 'upcoming') upcoming += 1;
+  }
+
+  const byCode = new Map(index.sets.map(([, code, numOfCards]) => [code, { code, numOfCards }]));
+  const checks = SPOT_CHECKS.map(([code, expected]) => {
+    const set = byCode.get(code);
+    if (!set) return `    ${code}: not in this dump`;
+    const actual = classifyProduct(set.code, set.numOfCards);
+    return `    ${code}: ${actual}${actual === expected ? '' : ` — EXPECTED ${expected}`}`;
+  });
+
+  process.stdout.write(
+    `  set products: ${[...counts].map(([product, count]) => `${product}=${count}`).join(', ')}\n` +
+      // The reprint radar has nothing to show if this is zero.
+      `  sets not yet released: ${upcoming}\n` +
+      `  spot checks:\n${checks.join('\n')}\n`,
+  );
 }
 
 async function main(): Promise<void> {
@@ -53,6 +101,7 @@ async function main(): Promise<void> {
       `${index.aliases.length} alt-art passcodes\n` +
       `  ${(json.length / 1024 / 1024).toFixed(1)} MB uncompressed\n`,
   );
+  reportOnData(index);
 }
 
 main().catch((error: unknown) => {
