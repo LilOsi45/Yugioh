@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { createScanner, cropRegion, extractCard, PASSCODE_REGION, type Scanner as OcrScanner } from '../lib/scan';
+import {
+  createScanner,
+  cropRegion,
+  extractCard,
+  OCR_MODES,
+  PASSCODE_REGION,
+  type Scanner as OcrScanner,
+} from '../lib/scan';
 import type { Card, Database } from '../lib/types';
 
 type Status = 'starting' | 'ready' | 'reading' | 'error';
@@ -135,19 +142,21 @@ export function Scanner({ db, onCard, onClose }: Props) {
     try {
       ocr.current ??= await createScanner();
 
-      // Two passes: dark print on light card, then inverted for the light-on-dark
-      // printing some card frames use. Whichever yields a real passcode wins.
+      // Each segmentation mode against the normal crop first, then the inverted one
+      // for cards printing light on a dark border. First real passcode wins.
       const readings: string[] = [];
       for (const { canvas } of crops) {
-        const text = await ocr.current.read(canvas);
-        readings.push(text.replace(/\s+/g, ''));
-        const card = extractCard(text, db);
-        if (card) {
-          const message = onCard(card);
-          setFeedback(message);
-          setLog((entries) => [message, ...entries].slice(0, 6));
-          setStatus('ready');
-          return;
+        for (const mode of OCR_MODES) {
+          const text = await ocr.current.read(canvas, mode);
+          readings.push(text.replace(/\s+/g, ''));
+          const card = extractCard(text, db);
+          if (card) {
+            const message = onCard(card);
+            setFeedback(message);
+            setLog((entries) => [message, ...entries].slice(0, 6));
+            setStatus('ready');
+            return;
+          }
         }
       }
 
@@ -201,7 +210,8 @@ export function Scanner({ db, onCard, onClose }: Props) {
           </div>
 
           <p className="muted" style={{ fontSize: 12.5, margin: '8px 0 0' }}>
-            Den Balken über die 8-stellige Nummer unten links auf der Karte halten, möglichst nah.
+            Karte aufrecht halten und den <strong>unteren Kartenrand</strong> in den Kasten legen — dort
+            steht die 8-stellige Nummer. Näher ist besser.
           </p>
 
           <div className="row">

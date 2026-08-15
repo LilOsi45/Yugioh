@@ -29,61 +29,83 @@ export function extractCard(text: string, db: Database): Card | null {
   return null;
 }
 
-/**
- * Otsu's method: picks the threshold that best separates the image into two
- * brightness groups. A fixed threshold loses the print whenever the card sits on a
- * dark border or in poor light, which is most of the time on a phone.
- *
- * Returns the last level belonging to the dark group, so callers must treat
- * `value <= threshold` as dark. Comparing with `<` puts the darkest pixels in the
- * light group and blanks the image.
- */
-export function otsuThreshold(histogram: number[], total: number): number {
-  let sum = 0;
-  for (let level = 0; level < 256; level += 1) sum += level * histogram[level]!;
-
-  let sumBackground = 0;
-  let weightBackground = 0;
-  let best = 0;
-  let bestVariance = -1;
-
-  for (let level = 0; level < 256; level += 1) {
-    weightBackground += histogram[level]!;
-    if (weightBackground === 0) continue;
-    const weightForeground = total - weightBackground;
-    if (weightForeground === 0) break;
-
-    sumBackground += level * histogram[level]!;
-    const meanBackground = sumBackground / weightBackground;
-    const meanForeground = (sum - sumBackground) / weightForeground;
-    const variance = weightBackground * weightForeground * (meanBackground - meanForeground) ** 2;
-    if (variance > bestVariance) {
-      bestVariance = variance;
-      best = level;
-    }
-  }
-  return best;
+export interface ThresholdOptions {
+  /** Neighbourhood radius as a fraction of the smaller image side. */
+  window?: number;
+  /** A pixel is ink when it is darker than `bias` times its local mean. */
+  bias?: number;
 }
 
-/** Greyscale, Otsu threshold, optionally inverted for light-on-dark print. */
+/**
+ * Local (adaptive) thresholding: every pixel is compared with the mean of its
+ * neighbourhood rather than one cut-off for the whole image.
+ *
+ * A card bottom holds two very different brightness zones — the near-white effect
+ * box and the darker card border the passcode is printed on. Measured against that
+ * layout, a single global threshold (Otsu included) pushes the whole border to
+ * black and swallows the number; local thresholding read it every time.
+ *
+ * Uses an integral image, so cost is independent of the window size.
+ */
+export function adaptiveThreshold(
+  grey: ArrayLike<number>,
+  width: number,
+  height: number,
+  options: ThresholdOptions = {},
+): Uint8Array {
+  const { window = 0.08, bias = 0.95 } = options;
+  const out = new Uint8Array(width * height);
+  if (width <= 0 || height <= 0) return out;
+
+  // integral[(y+1)*(w+1) + x+1] = sum of all pixels above and left of (x, y).
+  const stride = width + 1;
+  const integral = new Float64Array(stride * (height + 1));
+  for (let y = 0; y < height; y += 1) {
+    let rowSum = 0;
+    for (let x = 0; x < width; x += 1) {
+      rowSum += grey[y * width + x] ?? 0;
+      integral[(y + 1) * stride + x + 1] = (integral[y * stride + x + 1] ?? 0) + rowSum;
+    }
+  }
+
+  const radius = Math.max(4, Math.floor(Math.min(width, height) * window));
+  for (let y = 0; y < height; y += 1) {
+    const y0 = Math.max(0, y - radius);
+    const y1 = Math.min(height - 1, y + radius);
+    for (let x = 0; x < width; x += 1) {
+      const x0 = Math.max(0, x - radius);
+      const x1 = Math.min(width - 1, x + radius);
+      const area = (x1 - x0 + 1) * (y1 - y0 + 1);
+      const sum =
+        (integral[(y1 + 1) * stride + x1 + 1] ?? 0) -
+        (integral[y0 * stride + x1 + 1] ?? 0) -
+        (integral[(y1 + 1) * stride + x0] ?? 0) +
+        (integral[y0 * stride + x0] ?? 0);
+      const mean = sum / area;
+      out[y * width + x] = (grey[y * width + x] ?? 0) < mean * bias ? 0 : 255;
+    }
+  }
+  return out;
+}
+
+/** Greyscale, adaptive threshold, optionally inverted for light-on-dark print. */
 export function preprocess(canvas: HTMLCanvasElement, invert = false): void {
   const context = canvas.getContext('2d', { willReadFrequently: true });
   if (!context) return;
   const image = context.getImageData(0, 0, canvas.width, canvas.height);
   const { data } = image;
+  const pixels = data.length / 4;
 
-  const histogram = new Array<number>(256).fill(0);
-  for (let i = 0; i < data.length; i += 4) {
-    const grey = (data[i]! * 0.299 + data[i + 1]! * 0.587 + data[i + 2]! * 0.114) | 0;
-    data[i] = grey;
-    histogram[grey] = (histogram[grey] ?? 0) + 1;
+  const grey = new Float64Array(pixels);
+  for (let i = 0, p = 0; i < data.length; i += 4, p += 1) {
+    grey[p] = data[i]! * 0.299 + data[i + 1]! * 0.587 + data[i + 2]! * 0.114;
   }
 
-  const threshold = otsuThreshold(histogram, data.length / 4);
-  for (let i = 0; i < data.length; i += 4) {
-    const dark = data[i]! <= threshold;
+  const mask = adaptiveThreshold(grey, canvas.width, canvas.height);
+  for (let p = 0; p < pixels; p += 1) {
     // Tesseract wants dark text on white.
-    const value = dark === !invert ? 0 : 255;
+    const value = invert ? 255 - mask[p]! : mask[p]!;
+    const i = p * 4;
     data[i] = value;
     data[i + 1] = value;
     data[i + 2] = value;
@@ -92,8 +114,29 @@ export function preprocess(canvas: HTMLCanvasElement, invert = false): void {
   context.putImageData(image, 0, 0);
 }
 
+export interface OcrMode {
+  /** Tesseract page segmentation mode. */
+  psm: string;
+  /** Characters the engine may return; empty allows everything. */
+  whitelist: string;
+}
+
+/**
+ * Modes tried per scan, in order, stopping at the first real passcode.
+ *
+ * Measured against rendered card bottoms at two print sizes: mode 6 (uniform text
+ * block) and 11 (sparse text) found the passcode in every case, while mode 7
+ * (single text line) found it only when the crop held exactly one line — which a
+ * card bottom never does, since the copyright and edition sit on the same strip.
+ * Shipping mode 7 was why scans came back empty despite a legible crop.
+ */
+export const OCR_MODES: OcrMode[] = [
+  { psm: '6', whitelist: '0123456789' },
+  { psm: '11', whitelist: '0123456789' },
+];
+
 export interface Scanner {
-  read: (canvas: HTMLCanvasElement) => Promise<string>;
+  read: (canvas: HTMLCanvasElement, mode: OcrMode) => Promise<string>;
   stop: () => Promise<void>;
 }
 
@@ -104,14 +147,13 @@ export interface Scanner {
 export async function createScanner(): Promise<Scanner> {
   const { createWorker } = await import('tesseract.js');
   const worker = await createWorker('eng');
-  await worker.setParameters({
-    tessedit_char_whitelist: '0123456789',
-    // Treat the crop as a single line of text.
-    tessedit_pageseg_mode: '7' as never,
-  });
 
   return {
-    read: async (canvas) => {
+    read: async (canvas, mode) => {
+      await worker.setParameters({
+        tessedit_char_whitelist: mode.whitelist,
+        tessedit_pageseg_mode: mode.psm as never,
+      });
       const result = await worker.recognize(canvas);
       return result.data.text;
     },
@@ -129,12 +171,16 @@ export interface Rect {
 }
 
 /**
- * A band across the middle of the view. The user points it at the passcode rather
- * than framing the whole card in a fixed layout — aiming at one number is far
- * easier than lining a card up precisely, and it puts the digits large in frame,
- * which is what OCR actually needs.
+ * A generous window over the lower part of the view: the passcode sits on the
+ * bottom edge of a card, below the effect text.
+ *
+ * An earlier version used a thin band across the middle, which asked the user to
+ * place one small number precisely and, in testing, never contained the passcode at
+ * all. A large window only asks that the bottom of the card is in the bottom of the
+ * frame, and the extra text it picks up is harmless — every reading is checked
+ * against the card index anyway.
  */
-export const PASSCODE_REGION: Rect = { x: 0.06, y: 0.42, width: 0.88, height: 0.16 };
+export const PASSCODE_REGION: Rect = { x: 0.05, y: 0.55, width: 0.9, height: 0.42 };
 
 /**
  * Maps a rectangle expressed in fractions of the *displayed* element onto pixels of
