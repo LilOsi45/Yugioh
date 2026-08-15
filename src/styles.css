@@ -710,3 +710,17 @@ footer.app {
   color: var(--text-dim);
   text-align: center;
 }
+
+/* A thumbnail makes a long collection scannable by artwork, not just by name. */
+.owned-row {
+  align-items: center;
+}
+
+.owned-thumb {
+  width: 32px;
+  aspect-ratio: 59 / 86;
+  object-fit: cover;
+  border-radius: 3px;
+  background: var(--bg-sunken);
+  flex: 0 0 auto;
+}
