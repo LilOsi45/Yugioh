@@ -236,6 +236,27 @@ export const OCR_MODES: OcrMode[] = [
   { psm: '11', whitelist: '0123456789' },
 ];
 
+export interface PassVariant {
+  /** Invert the crop, for cards printing light on a dark border. */
+  invert: boolean;
+  mode: OcrMode;
+}
+
+/**
+ * Which single combination the continuous scanner tries on a given tick.
+ *
+ * Trying every mode against both crops on every tick is what a tap does, and on a
+ * phone that takes several seconds — far longer than the scan interval, so the
+ * scanner would spend its whole life inside one attempt. Rotating through the
+ * combinations one per tick keeps each attempt short while still covering all of
+ * them within a couple of seconds, which is what the tap used to buy.
+ */
+export function passVariant(tick: number): PassVariant {
+  const modes = OCR_MODES.length;
+  const index = ((tick % (modes * 2)) + modes * 2) % (modes * 2);
+  return { invert: index >= modes, mode: OCR_MODES[index % modes]! };
+}
+
 /**
  * Second pass, run only once a card is already identified: the same crop again, but
  * with letters allowed, to read the set code beside the passcode. Kept separate

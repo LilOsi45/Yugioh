@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CLEAR_AFTER_MS, extractSetCode, NO_MEMORY, stepScan } from '../src/lib/scan';
+import { CLEAR_AFTER_MS, extractSetCode, NO_MEMORY, OCR_MODES, passVariant, stepScan } from '../src/lib/scan';
 import { cardNamed, miniDatabase, setNamed } from './helpers';
 import type { Card } from '../src/lib/types';
 
@@ -53,6 +53,29 @@ describe('extractSetCode', () => {
 
   it('returns nothing for a card with no printings', () => {
     expect(extractSetCode('PHNI-DE087', cardNamed(db, 'Triple Tactics Talent'))).toBeNull();
+  });
+});
+
+describe('passVariant', () => {
+  it('covers every crop and mode combination within one cycle', () => {
+    const cycle = OCR_MODES.length * 2;
+    const seen = new Set<string>();
+    for (let tick = 0; tick < cycle; tick += 1) {
+      const variant = passVariant(tick);
+      seen.add(`${variant.invert}:${variant.mode.psm}`);
+    }
+    expect(seen.size).toBe(cycle);
+  });
+
+  it('starts with the plain crop, so the common case is tried first', () => {
+    expect(passVariant(0)).toEqual({ invert: false, mode: OCR_MODES[0] });
+  });
+
+  it('repeats once the cycle is through, and survives a wrapped counter', () => {
+    const cycle = OCR_MODES.length * 2;
+    expect(passVariant(cycle)).toEqual(passVariant(0));
+    expect(passVariant(cycle + 3)).toEqual(passVariant(3));
+    expect(passVariant(-1)).toEqual(passVariant(cycle - 1));
   });
 });
 
