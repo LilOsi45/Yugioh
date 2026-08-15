@@ -12,7 +12,7 @@ import {
   type SavedDeck,
 } from '../src/lib/library';
 import { displayName } from '../src/lib/dataset';
-import { extractCard } from '../src/lib/scan';
+import { coverSourceRect, extractCard, otsuThreshold } from '../src/lib/scan';
 import { deckNeeds } from '../src/lib/setFinder';
 import { cardNamed, miniDatabase, NOW } from './helpers';
 
@@ -226,5 +226,67 @@ describe('german card names', () => {
 
   it('ignores german entries whose passcode is not in the english dump', () => {
     expect(db.byName.has('kartediieesnichtgibt')).toBe(false);
+  });
+});
+
+describe('coverSourceRect', () => {
+  // A 390x520 view showing a 1920x1080 stream: object-fit cover scales to fill the
+  // height and throws away most of the width. The guide box and the crop must still
+  // describe the same part of the picture.
+  const guide = { x: 0.06, y: 0.42, width: 0.88, height: 0.16 };
+
+  it('crops the sides when the video is wider than the element', () => {
+    const rect = coverSourceRect(1920, 1080, 390, 520, guide);
+    // scale = max(390/1920, 520/1080) = 0.4815; visible width = 390/0.4815 = 810px
+    expect(Math.round(rect.sw)).toBe(Math.round((0.88 * 390) / (520 / 1080)));
+    expect(rect.sh).toBeCloseTo((0.16 * 520 * 1080) / 520, 5);
+    // Horizontally centred: equal amounts cut from both sides.
+    const cutLeft = rect.sx;
+    const cutRight = 1920 - (rect.sx + rect.sw);
+    expect(cutLeft).toBeGreaterThan(0);
+    expect(cutRight).toBeGreaterThan(0);
+    expect(cutLeft + rect.sw + cutRight).toBeCloseTo(1920, 5);
+  });
+
+  it('crops top and bottom when the video is taller than the element', () => {
+    const rect = coverSourceRect(1080, 1920, 390, 200, { x: 0, y: 0, width: 1, height: 1 });
+    expect(rect.sx).toBe(0);
+    expect(rect.sw).toBe(1080);
+    expect(rect.sy).toBeGreaterThan(0);
+    expect(rect.sh).toBeLessThan(1920);
+  });
+
+  it('is the identity when the aspect ratios already match', () => {
+    const rect = coverSourceRect(1000, 500, 200, 100, { x: 0.1, y: 0.2, width: 0.5, height: 0.5 });
+    expect(rect).toMatchObject({ sx: 100, sy: 100, sw: 500, sh: 250 });
+  });
+
+  it('never returns a rect that runs off the source', () => {
+    const rect = coverSourceRect(640, 480, 390, 520, { x: 0.9, y: 0.9, width: 0.5, height: 0.5 });
+    expect(rect.sx + rect.sw).toBeLessThanOrEqual(640);
+    expect(rect.sy + rect.sh).toBeLessThanOrEqual(480);
+  });
+
+  it('degrades safely before the video has dimensions', () => {
+    expect(coverSourceRect(0, 0, 390, 520, guide)).toMatchObject({ sx: 0, sy: 0, sw: 0, sh: 0 });
+  });
+});
+
+describe('otsuThreshold', () => {
+  it('splits two brightness groups between them', () => {
+    const histogram = new Array<number>(256).fill(0);
+    histogram[30] = 500; // dark print
+    histogram[220] = 500; // light card
+    const threshold = otsuThreshold(histogram, 1000);
+    // The threshold is the last level of the dark group, so 30 itself counts as
+    // dark and must not be excluded by the comparison in preprocess().
+    expect(threshold).toBeGreaterThanOrEqual(30);
+    expect(threshold).toBeLessThan(220);
+  });
+
+  it('handles an image of one flat colour', () => {
+    const histogram = new Array<number>(256).fill(0);
+    histogram[128] = 1000;
+    expect(otsuThreshold(histogram, 1000)).toBeLessThanOrEqual(128);
   });
 });
