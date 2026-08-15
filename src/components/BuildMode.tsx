@@ -1,19 +1,20 @@
 import { useState } from 'react';
 import { applyScannedCard, deckProgress, stillMissing, type SavedDeck } from '../lib/library';
+import { addCopies, collectionTotals, UNKNOWN_SET } from '../lib/collection';
 import { parseDeck } from '../lib/import';
 import { displayName } from '../lib/dataset';
 import { deckNeeds } from '../lib/setFinder';
 import { CardSearch } from './CardSearch';
 import { DeckView } from './DeckView';
-import { Scanner } from './Scanner';
+import { Scanner, type ScanResult } from './Scanner';
 import type { Collection } from '../lib/collection';
-import type { Card, Database } from '../lib/types';
+import type { Database } from '../lib/types';
 
 interface Props {
   saved: SavedDeck;
   db: Database;
   collection: Collection;
-  onOwnedChange: (cardId: number, owned: number) => void;
+  onChange: (next: Collection) => void;
   onBack: () => void;
 }
 
@@ -22,20 +23,21 @@ interface Props {
  * Anything else is reported and left alone, so working through a pile of cards does
  * not quietly fill the collection with everything on the table.
  */
-export function BuildMode({ saved, db, collection, onOwnedChange, onBack }: Props) {
+export function BuildMode({ saved, db, collection, onChange, onBack }: Props) {
   const [scanning, setScanning] = useState(false);
   const [keepOthers, setKeepOthers] = useState(false);
 
   const deck = parseDeck(saved.ydke, db);
-  const needs = deckNeeds(deck, collection);
+  const totals = collectionTotals(collection);
+  const needs = deckNeeds(deck, totals);
   const progress = deckProgress(needs);
   const missing = stillMissing(needs);
   const percent = Math.round(progress.ratio * 100);
 
   /** Returns the line shown to the user, so the scanner can echo what happened. */
-  function addCard(card: Card): string {
-    const outcome = applyScannedCard(needs, collection, card, { keepOthers });
-    if (outcome.owned !== null) onOwnedChange(card.id, outcome.owned);
+  function addCard(result: ScanResult): string {
+    const outcome = applyScannedCard(needs, totals, result.card, { keepOthers });
+    if (outcome.accepted) onChange(addCopies(collection, result.card.id, result.setCode ?? UNKNOWN_SET, 1));
     return outcome.message;
   }
 
@@ -71,13 +73,24 @@ export function BuildMode({ saved, db, collection, onOwnedChange, onBack }: Prop
         </label>
       </section>
 
-      {scanning && <Scanner db={db} onCard={addCard} onClose={() => setScanning(false)} />}
+      {scanning && (
+        <Scanner
+          db={db}
+          onCard={addCard}
+          onUndo={(result) => onChange(addCopies(collection, result.card.id, result.setCode ?? UNKNOWN_SET, -1))}
+          onClose={() => setScanning(false)}
+        />
+      )}
 
       <DeckView deck={deck} collection={collection} showOwnership />
 
       <section className="panel">
         <h2>Fehlt noch</h2>
-        <CardSearch db={db} onPick={(card) => addCard(card)} placeholder="Gefunden? Nach Name hinzufügen" />
+        <CardSearch
+          db={db}
+          onPick={(card) => addCard({ card, setCode: null })}
+          placeholder="Gefunden? Nach Name hinzufügen"
+        />
 
         {missing.length === 0 ? (
           <p className="empty" style={{ marginTop: 10 }}>

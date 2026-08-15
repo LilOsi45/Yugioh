@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { displayName } from '../lib/dataset';
 import { cardImageUrl } from '../lib/images';
 import { formatEuro } from '../lib/pricing';
@@ -7,49 +7,98 @@ import {
   SORT_LABELS,
   filterEntries,
   groupByCategory,
+  groupBySet,
   sortEntries,
   type CollectionEntry,
   type CollectionSort,
 } from '../lib/collectionView';
+import { addCopies, setOwnedTotal, UNKNOWN_SET, type Collection } from '../lib/collection';
 import { CardSearch } from './CardSearch';
-import { Scanner } from './Scanner';
-import type { Collection } from '../lib/collection';
+import { Scanner, type ScanResult } from './Scanner';
+import { useVirtualList } from './useVirtualList';
 import type { Card, Database } from '../lib/types';
 
 interface Props {
   db: Database;
   collection: Collection;
-  onOwnedChange: (cardId: number, owned: number) => void;
+  onChange: (next: Collection) => void;
   onReset: () => void;
   onImport: () => void;
 }
 
-const SORTS: CollectionSort[] = ['type', 'name', 'price', 'count'];
+const SORTS: CollectionSort[] = ['set', 'type', 'name', 'price', 'count'];
 
-export function CollectionPanel({ db, collection, onOwnedChange, onReset, onImport }: Props) {
+/** Fixed row metrics, so the virtual list can place rows without measuring each one. */
+const ROW_HEIGHT = 58;
+const HEADING_HEIGHT = 36;
+
+type ListItem =
+  | { kind: 'heading'; key: string; label: string; count: number }
+  | { kind: 'row'; key: string; entry: CollectionEntry };
+
+export function CollectionPanel({ db, collection, onChange, onReset, onImport }: Props) {
   const [scanning, setScanning] = useState(false);
-  const [sort, setSort] = useState<CollectionSort>('type');
+  const [sort, setSort] = useState<CollectionSort>('set');
   const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
 
-  const all = useMemo<CollectionEntry[]>(
-    () =>
-      [...collection]
-        .map(([id, count]) => ({ card: db.byPasscode.get(id), count }))
-        .filter((entry): entry is CollectionEntry => Boolean(entry.card)),
-    [collection, db],
+  // Filtering thousands of rows on every keystroke is what made typing lag.
+  useEffect(() => {
+    const timer = globalThis.setTimeout(() => setDebouncedQuery(query), 150);
+    return () => globalThis.clearTimeout(timer);
+  }, [query]);
+
+  const all = useMemo<CollectionEntry[]>(() => {
+    const entries: CollectionEntry[] = [];
+    for (const [id, holding] of collection) {
+      const card = db.byPasscode.get(id);
+      if (card) entries.push({ card, count: holding.total, bySet: holding.bySet });
+    }
+    return entries;
+  }, [collection, db]);
+
+  const items = useMemo<ListItem[]>(() => {
+    const shown = sortEntries(filterEntries(all, debouncedQuery), sort);
+    const out: ListItem[] = [];
+
+    if (sort === 'set') {
+      for (const group of groupBySet(shown, db)) {
+        const copies = group.entries.reduce((sum, entry) => sum + entry.count, 0);
+        out.push({ kind: 'heading', key: `s:${group.code}`, label: group.name, count: copies });
+        for (const entry of group.entries) out.push({ kind: 'row', key: `${group.code}:${entry.card.id}`, entry });
+      }
+    } else if (sort === 'type') {
+      for (const group of groupByCategory(shown)) {
+        const copies = group.entries.reduce((sum, entry) => sum + entry.count, 0);
+        out.push({ kind: 'heading', key: `c:${group.category}`, label: CATEGORY_LABELS[group.category], count: copies });
+        for (const entry of group.entries) out.push({ kind: 'row', key: String(entry.card.id), entry });
+      }
+    } else {
+      for (const entry of shown) out.push({ kind: 'row', key: String(entry.card.id), entry });
+    }
+    return out;
+  }, [all, debouncedQuery, sort, db]);
+
+  const heights = useMemo(
+    () => items.map((item) => (item.kind === 'heading' ? HEADING_HEIGHT : ROW_HEIGHT)),
+    [items],
   );
-
-  const shown = useMemo(() => sortEntries(filterEntries(all, query), sort), [all, query, sort]);
-  // Only the type sort earns headings; the others are one continuous ranking.
-  const groups = sort === 'type' ? groupByCategory(shown) : [{ category: null, entries: shown }];
+  const { ref, start, end, paddingTop, paddingBottom } = useVirtualList(heights);
 
   const copies = all.reduce((sum, entry) => sum + entry.count, 0);
   const valueCents = all.reduce((sum, entry) => sum + entry.card.priceCents * entry.count, 0);
 
-  function addCard(card: Card): string {
-    const owned = (collection.get(card.id) ?? 0) + 1;
-    onOwnedChange(card.id, owned);
-    return `${displayName(card)} — jetzt ${owned}`;
+  /** Scans carry the printing they were read from; typed entries do not. */
+  function addScanned(result: ScanResult): string {
+    const next = addCopies(collection, result.card.id, result.setCode ?? UNKNOWN_SET, 1);
+    onChange(next);
+    const total = next.get(result.card.id)?.total ?? 1;
+    const where = result.setCode ? ` (${result.setCode})` : '';
+    return `${displayName(result.card)}${where} — jetzt ${total}`;
+  }
+
+  function addByName(card: Card): string {
+    return addScanned({ card, setCode: null });
   }
 
   return (
@@ -82,11 +131,18 @@ export function CollectionPanel({ db, collection, onOwnedChange, onReset, onImpo
         )}
       </section>
 
-      {scanning && <Scanner db={db} onCard={addCard} onClose={() => setScanning(false)} />}
+      {scanning && (
+        <Scanner
+          db={db}
+          onCard={addScanned}
+          onUndo={(result) => onChange(addCopies(collection, result.card.id, result.setCode ?? UNKNOWN_SET, -1))}
+          onClose={() => setScanning(false)}
+        />
+      )}
 
       <section className="panel">
         <h2>Nach Name hinzufügen</h2>
-        <CardSearch db={db} onPick={addCard} />
+        <CardSearch db={db} onPick={addByName} />
       </section>
 
       <section className="panel">
@@ -103,12 +159,7 @@ export function CollectionPanel({ db, collection, onOwnedChange, onReset, onImpo
             />
             <div className="filters" style={{ marginTop: 8 }}>
               {SORTS.map((option) => (
-                <button
-                  key={option}
-                  className="chip"
-                  aria-pressed={sort === option}
-                  onClick={() => setSort(option)}
-                >
+                <button key={option} className="chip" aria-pressed={sort === option} onClick={() => setSort(option)}>
                   {SORT_LABELS[option]}
                 </button>
               ))}
@@ -118,45 +169,59 @@ export function CollectionPanel({ db, collection, onOwnedChange, onReset, onImpo
 
         {all.length === 0 ? (
           <p className="empty">Noch nichts da. Karte scannen oder nach Name hinzufügen.</p>
-        ) : shown.length === 0 ? (
-          <p className="empty">Nichts gefunden für „{query}".</p>
+        ) : items.length === 0 ? (
+          <p className="empty">Nichts gefunden für „{debouncedQuery}".</p>
         ) : (
-          groups.map((group) => (
-            <div key={group.category ?? 'all'}>
-              {group.category && (
-                <h3 style={{ marginTop: 14 }}>
-                  {CATEGORY_LABELS[group.category]}{' '}
-                  <span className="muted" style={{ fontWeight: 400 }}>
-                    ({group.entries.reduce((sum, entry) => sum + entry.count, 0)})
-                  </span>
-                </h3>
-              )}
-              {group.entries.map((entry) => (
-                <div className="line owned-row" key={entry.card.id}>
-                  <img className="owned-thumb" src={cardImageUrl(entry.card)} alt="" loading="lazy" decoding="async" />
-                  <span>
-                    {displayName(entry.card)}
-                    <br />
-                    <span className="muted" style={{ fontSize: 12.5 }}>
-                      je {entry.card.priceCents > 0 ? formatEuro(entry.card.priceCents) : 'kein Preis'}
-                      {entry.count > 1 && entry.card.priceCents > 0 && (
-                        <> · {formatEuro(entry.card.priceCents * entry.count)} gesamt</>
+          <div ref={ref}>
+            <div style={{ paddingTop, paddingBottom }}>
+              {items.slice(start, end).map((item) =>
+                item.kind === 'heading' ? (
+                  <h3 className="coll-heading" key={item.key}>
+                    {item.label}{' '}
+                    <span className="muted" style={{ fontWeight: 400 }}>
+                      ({item.count})
+                    </span>
+                  </h3>
+                ) : (
+                  <div className="line owned-row" key={item.key}>
+                    <img
+                      className="owned-thumb"
+                      src={cardImageUrl(item.entry.card)}
+                      alt=""
+                      loading="lazy"
+                      decoding="async"
+                    />
+                    <span className="owned-name">
+                      {displayName(item.entry.card)}
+                      <br />
+                      <span className="muted" style={{ fontSize: 12.5 }}>
+                        je{' '}
+                        {item.entry.card.priceCents > 0 ? formatEuro(item.entry.card.priceCents) : 'kein Preis'}
+                        {item.entry.count > 1 && item.entry.card.priceCents > 0 && (
+                          <> · {formatEuro(item.entry.card.priceCents * item.entry.count)} gesamt</>
+                        )}
+                      </span>
+                    </span>
+                    <span className="num">
+                      {sort === 'set' ? (
+                        <strong>{item.entry.count}</strong>
+                      ) : (
+                        <input
+                          type="number"
+                          min={0}
+                          max={99}
+                          value={item.entry.count}
+                          onChange={(event) =>
+                            onChange(setOwnedTotal(collection, item.entry.card.id, Number(event.target.value)))
+                          }
+                        />
                       )}
                     </span>
-                  </span>
-                  <span className="num">
-                    <input
-                      type="number"
-                      min={0}
-                      max={99}
-                      value={entry.count}
-                      onChange={(event) => onOwnedChange(entry.card.id, Number(event.target.value))}
-                    />
-                  </span>
-                </div>
-              ))}
+                  </div>
+                ),
+              )}
             </div>
-          ))
+          </div>
         )}
       </section>
     </>

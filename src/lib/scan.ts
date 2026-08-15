@@ -29,6 +29,107 @@ export function extractCard(text: string, db: Database): Card | null {
   return null;
 }
 
+/**
+ * The set code printed next to the passcode: `PHNI-DE087`, `LOB-EN001`, `OP27-DE001`.
+ * The dash is required — without it any digit run in the effect text would qualify.
+ */
+const SET_CODE_RUN = /([A-Z0-9]{2,5})\s*-\s*[A-Z]{0,2}\s*\d{1,3}/g;
+
+/**
+ * Characters OCR mixes up when it only has letter shapes to go on. Comparing two
+ * codes through this map lets `PHN1` match `PHNI` — but only when exactly one
+ * printing of the card is that close, so an ambiguous read is dropped.
+ */
+const CONFUSIONS: Record<string, string> = {
+  O: '0',
+  Q: '0',
+  D: '0',
+  I: '1',
+  L: '1',
+  S: '5',
+  B: '8',
+  Z: '2',
+  G: '6',
+};
+
+function shape(code: string): string {
+  return [...code].map((character) => CONFUSIONS[character] ?? character).join('');
+}
+
+/**
+ * Reads which printing the scanned card is, from the same crop as the passcode.
+ *
+ * Validated twice over: the prefix has to be a set the *scanned card* was actually
+ * printed in, which by construction is a set the index knows. Everything else is
+ * discarded — an unrecorded printing is a small gap, a wrong one is bad data in the
+ * collection forever.
+ */
+export function extractSetCode(text: string, card: Card): string | null {
+  const codes = new Map<string, string>();
+  for (const printing of card.printings) codes.set(printing.set.code.toUpperCase(), printing.set.code);
+
+  const byShape = new Map<string, string[]>();
+  for (const upper of codes.keys()) {
+    const key = shape(upper);
+    const bucket = byShape.get(key);
+    if (bucket) bucket.push(upper);
+    else byShape.set(key, [upper]);
+  }
+
+  for (const match of text.toUpperCase().matchAll(SET_CODE_RUN)) {
+    const prefix = match[1]!;
+    const exact = codes.get(prefix);
+    if (exact) return exact;
+
+    const near = byShape.get(shape(prefix));
+    // Two printings that look alike under OCR confusion: no way to pick, so don't.
+    if (near && near.length === 1) return codes.get(near[0]!) ?? null;
+  }
+  return null;
+}
+
+/** What the continuous scanner remembers between frames. */
+export interface ScanMemory {
+  /** The card counted last, held until the frame has been clear for a moment. */
+  cardId: number | null;
+  /** When the view first came back empty; null while a card is still in it. */
+  emptySince: number | null;
+}
+
+export const NO_MEMORY: ScanMemory = { cardId: null, emptySince: null };
+
+/** How long the view must stay empty before the same card may be counted again. */
+export const CLEAR_AFTER_MS = 1200;
+
+/**
+ * Decides whether a recognised card is a *new* card, reading several frames a
+ * second.
+ *
+ * A card lying in front of the lens is the same card in every frame, so counting
+ * needs a rule for "this one is already in". Time alone is the wrong rule: it makes
+ * a card left on the table count again every few seconds. What actually separates
+ * two cards is that the view clears in between, so that is what is tracked — with a
+ * short grace period, because one blurred frame in the middle of a card must not
+ * read as the card being taken away.
+ *
+ * A different card always counts immediately: swapping one for the other is the
+ * normal way through a pile, and waiting would drop cards.
+ */
+export function stepScan(
+  memory: ScanMemory,
+  cardId: number | null,
+  now: number,
+  clearAfter = CLEAR_AFTER_MS,
+): { memory: ScanMemory; count: boolean } {
+  if (cardId === null) {
+    const emptySince = memory.emptySince ?? now;
+    const forgotten = now - emptySince >= clearAfter;
+    return { memory: { cardId: forgotten ? null : memory.cardId, emptySince }, count: false };
+  }
+  if (memory.cardId === cardId) return { memory: { cardId, emptySince: null }, count: false };
+  return { memory: { cardId, emptySince: null }, count: true };
+}
+
 export interface ThresholdOptions {
   /** Neighbourhood radius as a fraction of the smaller image side. */
   window?: number;
@@ -134,6 +235,17 @@ export const OCR_MODES: OcrMode[] = [
   { psm: '6', whitelist: '0123456789' },
   { psm: '11', whitelist: '0123456789' },
 ];
+
+/**
+ * Second pass, run only once a card is already identified: the same crop again, but
+ * with letters allowed, to read the set code beside the passcode. Kept separate
+ * because allowing letters in the passcode pass would only give the digit matcher
+ * more ways to go wrong.
+ */
+export const SET_CODE_MODE: OcrMode = {
+  psm: '6',
+  whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-',
+};
 
 export interface Scanner {
   read: (canvas: HTMLCanvasElement, mode: OcrMode) => Promise<string>;

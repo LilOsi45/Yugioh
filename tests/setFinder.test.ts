@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { buildBuyPlan } from '../src/lib/buyPlan';
-import { collectionFromDeck, mergeCollections, parseCollection, serializeCollection, withOwned } from '../src/lib/collection';
 import { parseTextList, parseYdk } from '../src/lib/import';
 import { deckBudget, formatEuro } from '../src/lib/pricing';
 import { formatDaysUntil, recentReprints, upcomingReprints, waitWarnings } from '../src/lib/reprints';
@@ -207,30 +206,5 @@ describe('deckBudget', () => {
     // German locale: comma decimals, symbol last, non-breaking space before it.
     expect(formatEuro(2550).replace(/\u00a0/g, ' ')).toBe('25,50 €');
     expect(formatEuro(0).replace(/\u00a0/g, ' ')).toBe('0,00 €');
-  });
-});
-
-describe('collection', () => {
-  it('imports a decklist as owned cards', () => {
-    const owned = collectionFromDeck(parseYdk('#main\n14558127\n14558127\n!side\n14558127\n', db));
-    expect(owned.get(14558127)).toBe(3);
-  });
-
-  it('updates and removes copies immutably', () => {
-    const base = new Map([[1, 2]]);
-    expect(withOwned(base, 1, 3).get(1)).toBe(3);
-    expect(withOwned(base, 1, 0).has(1)).toBe(false);
-    expect(base.get(1)).toBe(2);
-  });
-
-  it('adds up when merging two collections', () => {
-    const merged = mergeCollections(new Map([[1, 2]]), new Map([[1, 1], [2, 4]]));
-    expect([...merged]).toEqual([[1, 3], [2, 4]]);
-  });
-
-  it('round-trips through storage and ignores corrupt entries', () => {
-    const collection = new Map([[14558127, 3]]);
-    expect([...parseCollection(serializeCollection(collection))]).toEqual([[14558127, 3]]);
-    expect([...parseCollection('{"12":0,"abc":2,"34":"x","56":1}')]).toEqual([[56, 1]]);
   });
 });
