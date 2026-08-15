@@ -36,15 +36,18 @@ async function getJson<T>(url: string): Promise<T> {
  * prefix rules in setClassification.ts are meant to tell apart. Printed on every
  * refresh so a wrong verdict shows up in the log instead of in the UI.
  */
-const SPOT_CHECKS: [code: string, expected: ProductClass][] = [
-  ['SDCK', 'structure'],
-  ['SR13', 'structure'],
-  ['YS18', 'boxset'],
-  ['LEDE', 'booster'],
-  ['PHNI', 'booster'],
-  ['LOB', 'booster'],
-  ['MP24', 'tin'],
-  ['OP27', 'promo'],
+const SPOT_CHECKS: [setName: string, expected: ProductClass][] = [
+  ['Structure Deck: The Crimson King', 'structure'],
+  ['Structure Deck: Dark World', 'structure'],
+  ['Starter Deck: Codebreaker', 'boxset'],
+  // Fixed-content products whose codes match no prefix family; only the name says so.
+  ['Egyptian God Deck: Slifer the Sky Dragon', 'boxset'],
+  ['Noble Knights of the Round Table Box Set', 'boxset'],
+  ['Legacy of Destruction', 'booster'],
+  ['Phantom Nightmare', 'booster'],
+  ['Legend of Blue Eyes White Dragon', 'booster'],
+  ['25th Anniversary Tin: Dueling Mirrors', 'tin'],
+  ['OTS Tournament Pack 27', 'promo'],
 ];
 
 /**
@@ -55,28 +58,27 @@ const SPOT_CHECKS: [code: string, expected: ProductClass][] = [
 function reportOnData(index: RawDatabase): void {
   const counts = new Map<ProductClass, number>();
   let upcoming = 0;
-  for (const [, code, numOfCards, tcgDate] of index.sets) {
-    const product = classifyProduct(code, numOfCards);
+  for (const [name, code, numOfCards, tcgDate] of index.sets) {
+    const product = classifyProduct(name, code, numOfCards);
     counts.set(product, (counts.get(product) ?? 0) + 1);
     if (classifyAvailability(tcgDate || null) === 'upcoming') upcoming += 1;
   }
 
-  // Several sets can share a code (a set and its anniversary reprint both use
-  // LOB-EN###), so list every one of them rather than letting the last silently win.
-  const checks = SPOT_CHECKS.flatMap(([code, expected]) => {
-    const matches = index.sets.filter(([, setCode]) => setCode === code);
-    if (matches.length === 0) return [`    ${code}: not in this dump`];
-    return matches.map(([name, setCode, numOfCards]) => {
-      const actual = classifyProduct(setCode, numOfCards);
-      const verdict = actual === expected ? '' : ` — EXPECTED ${expected}`;
-      return `    ${code}: ${actual}${verdict} (${numOfCards} cards, "${name}")`;
-    });
+  // Keyed by name, not code: several sets share a code (an original set and its
+  // anniversary reprint both use LOB-EN###), which made an earlier version of this
+  // check report a verdict for a different set than the one it named.
+  const checks = SPOT_CHECKS.map(([setName, expected]) => {
+    const match = index.sets.find(([name]) => name === setName);
+    if (!match) return `    "${setName}": not in this dump`;
+    const actual = classifyProduct(match[0], match[1], match[2]);
+    const verdict = actual === expected ? '' : ` — EXPECTED ${expected}`;
+    return `    ${match[1]}: ${actual}${verdict} ("${setName}")`;
   });
 
   // A big set filed as a promo is the signature of the size-based fallback rule
   // swallowing something it should not.
   const suspicious = index.sets
-    .filter(([, code, numOfCards]) => classifyProduct(code, numOfCards) === 'promo')
+    .filter(([name, code, numOfCards]) => classifyProduct(name, code, numOfCards) === 'promo')
     .sort((a, b) => b[2] - a[2])
     .slice(0, 10)
     .map(([name, code, numOfCards]) => `    ${code}: ${numOfCards} cards, "${name}"`);
