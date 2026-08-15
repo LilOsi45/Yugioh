@@ -37,6 +37,10 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
       - run: npm run build
       - uses: actions/configure-pages@v5
+        with:
+          # Turn Pages on from here, so setting up the site needs no visit to the
+          # repository settings.
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
