@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { applyScannedCard, deckProgress, stillMissing, type SavedDeck } from '../lib/library';
 import { parseDeck } from '../lib/import';
+import { displayName } from '../lib/dataset';
 import { deckNeeds } from '../lib/setFinder';
 import { CardSearch } from './CardSearch';
 import { Scanner } from './Scanner';
@@ -47,45 +48,45 @@ export function BuildMode({ saved, db, collection, onOwnedChange, onBack }: Prop
       </div>
 
       <section className="panel">
-        <h2>{progress.complete ? 'Deck complete' : `${progress.missingCards} cards still missing`}</h2>
+        <h2>{progress.complete ? 'Deck vollständig' : `${progress.missingCards} Karten fehlen noch`}</h2>
         <div className="bar">
           <div className="fill" style={{ width: `${percent}%` }} />
         </div>
         <p className="muted" style={{ fontSize: 13, margin: '6px 0 0' }}>
-          {progress.owned} of {progress.required} copies owned · {percent}%
+          {progress.owned} von {progress.required} Kopien · {percent}%
         </p>
 
         {!scanning && (
           <div className="row">
             <button className="primary" onClick={() => setScanning(true)}>
-              Scan cards
+              Karten scannen
             </button>
           </div>
         )}
 
         <label className="check" style={{ marginTop: 10, display: 'flex', gap: 7, fontSize: 13 }}>
           <input type="checkbox" checked={keepOthers} onChange={(event) => setKeepOthers(event.target.checked)} />
-          <span className="muted">Also collect cards that are not in this deck</span>
+          <span className="muted">Karten sammeln, die nicht in diesem Deck sind</span>
         </label>
       </section>
 
       {scanning && <Scanner db={db} onCard={addCard} onClose={() => setScanning(false)} />}
 
       <section className="panel">
-        <h2>Still needed</h2>
-        <CardSearch db={db} onPick={(card) => addCard(card)} placeholder="Found one? Add it by name" />
+        <h2>Fehlt noch</h2>
+        <CardSearch db={db} onPick={(card) => addCard(card)} placeholder="Gefunden? Nach Name hinzufügen" />
 
         {missing.length === 0 ? (
           <p className="empty" style={{ marginTop: 10 }}>
-            Everything is here. Go build it.
+            Alles da. Bau es.
           </p>
         ) : (
           missing.map((need) => (
             <div className="line" key={need.card.id}>
-              <span>{need.card.name}</span>
+              <span>{displayName(need.card)}</span>
               <span className="num">
                 <strong>{need.needed}</strong>
-                <span className="muted"> of {need.required}</span>
+                <span className="muted"> von {need.required}</span>
               </span>
             </div>
           ))

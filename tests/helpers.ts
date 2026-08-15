@@ -10,7 +10,7 @@ import fixture from './fixtures/mini-db.json';
 export const NOW = new Date('2026-08-15T00:00:00Z');
 
 export function miniDatabase(): Database {
-  return decodeDatabase(buildIndex(fixture.cards as ApiCard[], fixture.sets as ApiSet[], NOW));
+  return decodeDatabase(buildIndex(fixture.cards as ApiCard[], fixture.sets as ApiSet[], NOW, fixture.germanCards));
 }
 
 export function cardNamed(db: Database, name: string) {

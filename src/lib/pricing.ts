@@ -45,7 +45,7 @@ export function deckBudget(needs: CardNeed[], topItems = 10): DeckBudget {
   return { fullDeckCents, missingCents, ownedCents, unpriced, biggestItems };
 }
 
-const EURO = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'EUR' });
+const EURO = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' });
 
 export function formatEuro(cents: number): string {
   return EURO.format(cents / 100);

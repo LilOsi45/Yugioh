@@ -3,7 +3,7 @@ export type Tab = 'analyse' | 'decks' | 'collection';
 const TABS: { id: Tab; label: string }[] = [
   { id: 'analyse', label: 'Analyse' },
   { id: 'decks', label: 'Decks' },
-  { id: 'collection', label: 'Collection' },
+  { id: 'collection', label: 'Sammlung' },
 ];
 
 interface Props {

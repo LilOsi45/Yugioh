@@ -1,4 +1,5 @@
 import { formatEuro } from '../lib/pricing';
+import { displayName } from '../lib/dataset';
 import { formatDaysUntil, type ReprintNews } from '../lib/reprints';
 import type { CardNeed } from '../lib/setFinder';
 
@@ -34,16 +35,16 @@ export function DeckList({
   return (
     <details className="panel">
       <summary>
-        Cards &amp; collection <span className="count">{missing} missing</span>
+        Karten &amp; Sammlung <span className="count">{missing} fehlen</span>
       </summary>
       <div className="body">
         <div className="row" style={{ marginTop: 0, marginBottom: 6 }}>
           <button className="link" onClick={onImportCollection}>
-            Import .ydk as owned
+            .ydk als Besitz importieren
           </button>
           {ownedCount > 0 && (
             <button className="link" onClick={onResetCollection}>
-              Reset
+              Zurücksetzen
             </button>
           )}
         </div>
@@ -53,14 +54,14 @@ export function DeckList({
           return (
             <div className="line" key={need.card.id}>
               <span>
-                {need.card.name}
+                {displayName(need.card)}
                 <br />
                 <span className="muted" style={{ fontSize: 12.5 }}>
-                  {need.required}x needed · {need.card.priceCents > 0 ? formatEuro(need.card.priceCents) : 'no price'}
+                  {need.required}x gebraucht · {need.card.priceCents > 0 ? formatEuro(need.card.priceCents) : 'kein Preis'}
                   {reprint && (
                     <>
                       {' '}
-                      <span className="badge wait">reprint {formatDaysUntil(reprint.daysUntil)}</span>
+                      <span className="badge wait">Reprint {formatDaysUntil(reprint.daysUntil)}</span>
                     </>
                   )}
                 </span>
@@ -68,7 +69,7 @@ export function DeckList({
               <span className="num">
                 <label>
                   <span className="muted" style={{ fontSize: 12 }}>
-                    own{' '}
+                    hab{' '}
                   </span>
                   <input
                     type="number"

@@ -32,6 +32,12 @@ export interface RawDatabase {
    * in `cards`. .ydk files routinely reference these instead of the main passcode.
    */
   aliases: [number, number][];
+  /**
+   * German card names by card position. Optional: YGOPRODeck's German data covers
+   * fewer cards than the English set, and an index built before this existed simply
+   * has no entry, so the app falls back to the English name.
+   */
+  de?: [number, string][];
 }
 
 /**
@@ -68,7 +74,10 @@ export interface Printing {
 
 export interface Card {
   id: number;
+  /** English name — the canonical one, always present. */
   name: string;
+  /** German name where YGOPRODeck has one. */
+  nameDe: string | null;
   type: string;
   /** Cardmarket price in euro cents; 0 when YGOPRODeck has no price. */
   priceCents: number;

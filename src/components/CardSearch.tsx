@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { normalizeName } from '../lib/normalize';
+import { displayName } from '../lib/dataset';
 import type { Card, Database } from '../lib/types';
 
 interface Props {
@@ -12,7 +13,7 @@ interface Props {
  * Add a card by typing its name. Scanning will not always work — bad light, a
  * sleeved card, a worn passcode — so this always stays available next to it.
  */
-export function CardSearch({ db, onPick, placeholder = 'Add a card by name' }: Props) {
+export function CardSearch({ db, onPick, placeholder = 'Karte nach Name hinzufügen' }: Props) {
   const [query, setQuery] = useState('');
 
   const matches = useMemo(() => {
@@ -47,11 +48,11 @@ export function CardSearch({ db, onPick, placeholder = 'Add a card by name' }: P
             setQuery('');
           }}
         >
-          <span>{card.name}</span>
+          <span>{displayName(card)}</span>
           <span className="num muted">+1</span>
         </button>
       ))}
-      {query.length >= 3 && matches.length === 0 && <p className="empty">No card matches that.</p>}
+      {query.length >= 3 && matches.length === 0 && <p className="empty">Keine Karte gefunden.</p>}
     </div>
   );
 }

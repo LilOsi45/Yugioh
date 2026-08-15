@@ -1,4 +1,5 @@
 import { formatEuro } from '../lib/pricing';
+import { displayName } from '../lib/dataset';
 import { formatDaysUntil, type ReprintNews } from '../lib/reprints';
 
 interface Props {
@@ -11,7 +12,7 @@ export function ReprintRadar({ upcoming, warnings }: Props) {
     return (
       <section className="panel">
         <h2>Reprints</h2>
-        <p className="empty">Nothing in your deck is being reprinted right now.</p>
+        <p className="empty">Aktuell wird nichts aus deinem Deck neu aufgelegt.</p>
       </section>
     );
   }
@@ -19,18 +20,18 @@ export function ReprintRadar({ upcoming, warnings }: Props) {
   return (
     <details className="panel" open={warnings.length > 0}>
       <summary>
-        Reprints <span className="count">{upcoming.length} coming</span>
+        Reprints <span className="count">{upcoming.length} kommen</span>
       </summary>
       <div className="body">
         {warnings.length > 0 && (
           <div className="notice" style={{ marginTop: 0, marginBottom: 10 }}>
-            <strong>Worth waiting for.</strong> Pricey enough that a reprint should move the price.
+            <strong>Warten lohnt sich.</strong> Teuer genug, dass ein Reprint den Preis drücken sollte.
           </div>
         )}
         {upcoming.map((news) => (
           <div className="line" key={`${news.card.id}-${news.printing.set.index}`}>
             <span>
-              {news.card.name}
+              {displayName(news.card)}
               <br />
               <span className="muted" style={{ fontSize: 12.5 }}>
                 {news.printing.set.code} · {news.printing.rarity} · {formatDaysUntil(news.daysUntil)}

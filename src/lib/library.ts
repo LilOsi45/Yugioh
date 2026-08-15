@@ -1,3 +1,4 @@
+import { displayName } from './dataset';
 import type { Card, Deck } from './types';
 import type { CardNeed } from './setFinder';
 
@@ -69,7 +70,7 @@ export function saveLibrary(decks: SavedDeck[]): void {
  * an intent to keep two copies.
  */
 export function addDeck(library: SavedDeck[], name: string, ydke: string, now = new Date()): SavedDeck[] {
-  const trimmed = name.trim() || 'Unnamed deck';
+  const trimmed = name.trim() || 'Unbenanntes Deck';
   const existing = library.find((deck) => deck.ydke === ydke);
   if (existing) {
     return library.map((deck) => (deck.id === existing.id ? { ...deck, name: trimmed } : deck));
@@ -148,17 +149,17 @@ export function applyScannedCard(
   if (!need) {
     if (options.keepOthers) {
       const owned = (collection.get(card.id) ?? 0) + 1;
-      return { message: `${card.name} — not in this deck, added to collection`, owned };
+      return { message: `${displayName(card)} — nicht im Deck, zur Sammlung`, owned };
     }
-    return { message: `${card.name} — not in this deck, ignored`, owned: null };
+    return { message: `${displayName(card)} — nicht in diesem Deck, ignoriert`, owned: null };
   }
 
   if (need.needed === 0) {
-    return { message: `${card.name} — already have all ${need.required}`, owned: null };
+    return { message: `${displayName(card)} — hast schon alle ${need.required}`, owned: null };
   }
 
   const owned = need.owned + 1;
-  return { message: `${card.name} ${owned}/${need.required} ✓`, owned };
+  return { message: `${displayName(card)} ${owned}/${need.required} ✓`, owned };
 }
 
 /** A short, human name suggestion from a deck's most expensive cards. */
@@ -167,5 +168,5 @@ export function suggestDeckName(deck: Deck): string {
     .filter((entry) => entry.section === 'main')
     .map((entry) => entry.card)
     .sort((a, b) => b.priceCents - a.priceCents)[0];
-  return best ? `${best.name} deck` : 'New deck';
+  return best ? `${displayName(best)}-Deck` : 'Neues Deck';
 }

@@ -103,7 +103,19 @@ async function main(): Promise<void> {
     throw new Error('cardinfo.php returned no cards — aborting rather than shipping an empty index.');
   }
 
-  const index = buildIndex(apiCards, setsResponse);
+  // German names are a bonus, not a requirement: the app falls back to English
+  // names everywhere, so a failure here must not cost us the whole refresh.
+  let germanCards: { id: number; name: string }[] = [];
+  try {
+    const german = await getJson<{ data?: { id: number; name: string }[] }>(`${API}/cardinfo.php?language=de`);
+    germanCards = german.data ?? [];
+  } catch (error) {
+    process.stdout.write(
+      `  german names unavailable (${error instanceof Error ? error.message : String(error)}) — continuing in English\n`,
+    );
+  }
+
+  const index = buildIndex(apiCards, setsResponse, new Date(), germanCards);
   const json = JSON.stringify(index);
 
   await mkdir(dirname(OUT_FILE), { recursive: true });
@@ -113,7 +125,7 @@ async function main(): Promise<void> {
   process.stdout.write(
     `Wrote ${OUT_FILE}\n` +
       `  ${index.cards.length} cards, ${index.sets.length} sets, ${printings} printings, ` +
-      `${index.aliases.length} alt-art passcodes\n` +
+      `${index.aliases.length} alt-art passcodes, ${index.de?.length ?? 0} german names\n` +
       `  ${(json.length / 1024 / 1024).toFixed(1)} MB uncompressed\n`,
   );
   reportOnData(index);

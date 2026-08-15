@@ -138,18 +138,18 @@ export function daysUntilRelease(tcgDate: string | null, now: Date = new Date())
 export const PRODUCT_LABELS: Record<ProductClass, string> = {
   structure: 'Structure Deck',
   boxset: 'Box / Deck',
-  tin: 'Tin (sealed packs)',
-  booster: 'Booster (random pull)',
+  tin: 'Tin (Packs drin)',
+  booster: 'Booster (Zufallszug)',
   promo: 'Promo',
-  unknown: 'Unknown product',
+  unknown: 'Unbekannt',
 };
 
 export const AVAILABILITY_LABELS: Record<Availability, string> = {
-  upcoming: 'Not released yet',
-  current: 'In print',
-  aging: 'Getting scarce',
-  'out-of-print': 'Out of print',
-  unknown: 'Unknown',
+  upcoming: 'Noch nicht erschienen',
+  current: 'Im Handel',
+  aging: 'Wird knapp',
+  'out-of-print': 'Vergriffen',
+  unknown: 'Unbekannt',
 };
 
 export function describeSet(set: SetInfo): string {
