@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { CLEAR_AFTER_MS, extractSetCode, NO_MEMORY, OCR_MODES, passVariant, stepScan } from '../src/lib/scan';
+import {
+  AUTO_VARIANTS,
+  CLEAR_AFTER_MS,
+  extractSetCode,
+  matchPasscode,
+  NO_MEMORY,
+  PASS_VARIANTS,
+  passVariant,
+  stepScan,
+} from '../src/lib/scan';
 import { cardNamed, miniDatabase, setNamed } from './helpers';
 import type { Card } from '../src/lib/types';
 
@@ -7,10 +16,46 @@ const db = miniDatabase();
 const ash = cardNamed(db, 'Ash Blossom & Joyous Spring'); // PHNI, OP27, RS26
 const pot = cardNamed(db, 'Pot of Prosperity'); // LEDE only
 
+describe('matchPasscode', () => {
+  it('takes an exact reading as exact', () => {
+    expect(matchPasscode('14558127', db)).toEqual({ card: ash, exact: true });
+  });
+
+  it('repairs a single misread digit when asked, and says that it did', () => {
+    // 14558127 with the 5 read as a 6.
+    expect(matchPasscode('14568127', db, { repair: true })).toEqual({ card: ash, exact: false });
+  });
+
+  it('puts back a digit the engine dropped', () => {
+    expect(matchPasscode('1455812', db, { repair: true })).toEqual({ card: ash, exact: false });
+  });
+
+  it('never repairs unless asked, so the continuous scan cannot invent a card', () => {
+    expect(matchPasscode('14568127', db)).toBeNull();
+    expect(matchPasscode('1455812', db)).toBeNull();
+  });
+
+  it('refuses when the reading is too far gone', () => {
+    expect(matchPasscode('99999999', db, { repair: true })).toBeNull();
+    expect(matchPasscode('44558122', db, { repair: true })).toBeNull(); // two digits out
+  });
+
+  it('prefers an exact match over a repair', () => {
+    // Both a real passcode and a repairable near-miss in one reading.
+    expect(matchPasscode('99999999 14558127', db, { repair: true })?.exact).toBe(true);
+  });
+});
+
 describe('extractSetCode', () => {
   it('reads the printing off the card', () => {
     expect(extractSetCode('PHNI-DE087', ash)).toBe('PHNI');
     expect(extractSetCode('14558127\nOP27-EN002 1st Edition', ash)).toBe('OP27');
+  });
+
+  it('survives stray characters the engine inserts', () => {
+    // A real reading from a rendered card: an O appeared inside the language part.
+    expect(extractSetCode('ATK1600DEF1200 68464358 PHNI-DEO087', ash)).toBe('PHNI');
+    expect(extractSetCode('PHNI DE 087', ash)).toBe('PHNI');
   });
 
   it('tolerates the letter-digit confusions OCR makes', () => {
@@ -32,8 +77,8 @@ describe('extractSetCode', () => {
     expect(extractSetCode('OP27-EN2', ash)).toBe('OP27');
   });
 
-  it('needs the dash, so effect-text numbers cannot pose as a set code', () => {
-    expect(extractSetCode('PHNI 087 destroy 2 cards', ash)).toBeNull();
+  it('needs a card number after the code, so plain words cannot pose as one', () => {
+    expect(extractSetCode('PHNI destroys a monster', ash)).toBeNull();
   });
 
   it('gives up when two printings look alike under confusion', () => {
@@ -57,25 +102,30 @@ describe('extractSetCode', () => {
 });
 
 describe('passVariant', () => {
-  it('covers every crop and mode combination within one cycle', () => {
-    const cycle = OCR_MODES.length * 2;
+  it('tries a different combination on every tick of a cycle', () => {
     const seen = new Set<string>();
-    for (let tick = 0; tick < cycle; tick += 1) {
+    for (let tick = 0; tick < AUTO_VARIANTS; tick += 1) {
       const variant = passVariant(tick);
-      seen.add(`${variant.invert}:${variant.mode.psm}`);
+      seen.add(`${variant.invert}:${variant.bias}:${variant.mode.psm}`);
     }
-    expect(seen.size).toBe(cycle);
+    expect(seen.size).toBe(AUTO_VARIANTS);
   });
 
   it('starts with the plain crop, so the common case is tried first', () => {
-    expect(passVariant(0)).toEqual({ invert: false, mode: OCR_MODES[0] });
+    expect(passVariant(0)).toEqual(PASS_VARIANTS[0]);
+    expect(passVariant(0).invert).toBe(false);
+  });
+
+  it('leaves the inverted crops to a tap, so an ordinary card is not made to wait', () => {
+    for (let tick = 0; tick < AUTO_VARIANTS; tick += 1) expect(passVariant(tick).invert).toBe(false);
+    expect(PASS_VARIANTS.some((variant) => variant.invert)).toBe(true);
+    expect(PASS_VARIANTS.length).toBeGreaterThan(AUTO_VARIANTS);
   });
 
   it('repeats once the cycle is through, and survives a wrapped counter', () => {
-    const cycle = OCR_MODES.length * 2;
-    expect(passVariant(cycle)).toEqual(passVariant(0));
-    expect(passVariant(cycle + 3)).toEqual(passVariant(3));
-    expect(passVariant(-1)).toEqual(passVariant(cycle - 1));
+    expect(passVariant(AUTO_VARIANTS)).toEqual(passVariant(0));
+    expect(passVariant(AUTO_VARIANTS + 1)).toEqual(passVariant(1));
+    expect(passVariant(-1)).toEqual(passVariant(AUTO_VARIANTS - 1));
   });
 });
 
