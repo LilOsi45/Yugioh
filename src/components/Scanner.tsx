@@ -1,21 +1,39 @@
 import { useEffect, useRef, useState } from 'react';
 import {
+  captureFrame,
   createScanner,
   cropRegion,
   cropVideoRegion,
   extractSetCode,
+  lineBand,
   matchPasscode,
   NO_MEMORY,
   PASS_VARIANTS,
   PASSCODE_REGION,
   passVariant,
+  samplePatch,
+  samplePixels,
   SET_CODE_MODE,
   SET_CODE_REGION,
   SET_CODE_SPARSE_MODE,
   stepScan,
+  wordCentre,
+  type Crop,
+  type Frame,
   type PassVariant,
   type Scanner as OcrScanner,
+  type WordBox,
 } from '../lib/scan';
+import {
+  ART_REGION,
+  boundingBoxOnCard,
+  cardFrameFromAnchors,
+  NAME_REGION,
+  RARITY_REGIONS,
+  regionsVisible,
+  TEXTBOX_REGION,
+} from '../lib/cardGeometry';
+import { combineLooks, decideRarity, measureLook, type Look, type RarityDecision } from '../lib/rarity';
 import { displayName } from '../lib/dataset';
 import { cardmarketUrl } from '../lib/market';
 import { formatEuro } from '../lib/pricing';
@@ -29,7 +47,6 @@ type Engine = 'loading' | 'ready' | 'failed';
 export interface ScanResult {
   card: Card;
   setCode: string | null;
-  /** Only ever set by hand: the camera cannot tell a Secret Rare from a Common. */
   rarity?: string | null;
 }
 
@@ -63,6 +80,14 @@ const SLOW_PASS_MS = 15000;
 /** Width of the on-screen copy of what the engine is being given. */
 const PREVIEW_WIDTH = 320;
 
+/**
+ * How often the card's colours are sampled before deciding the rarity, and how far
+ * apart. Foil is directional — it flashes as the card turns — so a few frames a
+ * moment apart say more than one, and hand tremor supplies the movement for free.
+ */
+const RARITY_SAMPLES = 3;
+const RARITY_GAP_MS = 70;
+
 interface Entry {
   key: number;
   result: ScanResult;
@@ -72,6 +97,33 @@ interface Entry {
   exact: boolean;
   /** Offered only when the card exists at several rarities in the scanned set. */
   choices: string[];
+  /** True when the rarity in `result` came from the camera rather than a tap. */
+  detected: boolean;
+}
+
+const wait = (ms: number) => new Promise((resolve) => globalThis.setTimeout(resolve, ms));
+
+/** The longest run of digits a reading contains, which is what a passcode looks like. */
+function passcodeWord(words: WordBox[]): WordBox | null {
+  let best: WordBox | null = null;
+  let bestLength = 5;
+  for (const word of words) {
+    const digits = word.text.replace(/\D/g, '').length;
+    if (digits > bestLength) {
+      best = word;
+      bestLength = digits;
+    }
+  }
+  return best;
+}
+
+/** The word the set code was read from, so its position on the card is known. */
+function setCodeWord(words: WordBox[], code: string): WordBox | null {
+  const wanted = code.toUpperCase();
+  for (const word of words) {
+    if (word.text.toUpperCase().replace(/[^A-Z0-9]/g, '').startsWith(wanted)) return word;
+  }
+  return null;
 }
 
 /**
@@ -131,6 +183,9 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
   const [torch, setTorch] = useState(false);
   const [typed, setTyped] = useState('');
   const [sound, setSound] = useState(true);
+  const [detectRarity, setDetectRarity] = useState(true);
+  /** Held for the whole session once chosen: a rarity collection is all one rarity. */
+  const [sessionRarity, setSessionRarity] = useState<string | null>(null);
   /* Proof of life: without these the scanner looks identical whether it is
      searching or dead, which is exactly how the last version failed. */
   const [checked, setChecked] = useState(0);
@@ -157,6 +212,10 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
   onCardRef.current = onCard;
   const soundRef = useRef(sound);
   soundRef.current = sound;
+  const detectRarityRef = useRef(detectRarity);
+  detectRarityRef.current = detectRarity;
+  const sessionRarityRef = useRef(sessionRarity);
+  sessionRarityRef.current = sessionRarity;
   /** One audio context for the whole session; creating one per beep is wasteful. */
   const audio = useRef<AudioContext | null>(null);
 
@@ -289,11 +348,28 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     if (soundRef.current) beep();
   }
 
-  /** `exact` is false when a digit had to be repaired to reach a known card. */
-  function record(result: ScanResult, exact = true) {
-    // A card printed at one rarity in that set needs no question; the answer is known.
+  /**
+   * `exact` is false when a digit had to be repaired to reach a known card.
+   *
+   * Three things can answer the rarity, in this order: the set only offers one, so
+   * there is nothing to ask; the session was told to stick to one rarity; the camera
+   * measured it. Anything left over is asked, as chips.
+   */
+  function record(result: ScanResult, exact = true, decision?: RarityDecision | null) {
     const choices = raritiesIn(result.card, result.setCode);
-    const settled: ScanResult = choices.length === 1 ? { ...result, rarity: choices[0]! } : result;
+    const held = sessionRarityRef.current;
+    let rarity = result.rarity ?? null;
+    let detected = false;
+    if (!rarity && choices.length === 1) rarity = choices[0]!;
+    if (!rarity && held && choices.includes(held)) rarity = held;
+    if (!rarity && decision?.rarity) {
+      rarity = decision.rarity;
+      detected = true;
+    }
+
+    const settled: ScanResult = rarity ? { ...result, rarity } : result;
+    // Offered best guess first, so the likely correction is the nearest chip.
+    const ordered = decision && decision.ranked.length > 0 ? decision.ranked.map((guess) => guess.rarity) : choices;
 
     const message = onCardRef.current(settled);
     setFeedback(exact ? message : `${message} — unsicher gelesen, bitte prüfen`);
@@ -305,7 +381,8 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
           message,
           undone: false,
           exact,
-          choices: choices.length > 1 ? choices : [],
+          choices: choices.length > 1 ? ordered : [],
+          detected,
         },
         ...list,
       ].slice(0, 40),
@@ -322,7 +399,7 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     const updated: ScanResult = { ...entry.result, rarity };
     onCardRef.current(updated);
     setEntries((list) =>
-      list.map((item) => (item.key === entry.key ? { ...item, result: updated } : item)),
+      list.map((item) => (item.key === entry.key ? { ...item, result: updated, detected: false } : item)),
     );
   }
 
@@ -361,31 +438,100 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
    * since it is sharper when the code does happen to be in it.
    */
   async function readSetCode(
-    source: HTMLVideoElement,
-    guideCrop: HTMLCanvasElement,
+    frame: Frame,
+    guideCrop: Crop,
     card: Card,
     scanner: OcrScanner,
-  ): Promise<string | null> {
-    const wide = cropVideoRegion(source, SET_CODE_REGION);
+    line: { y: number; height: number } | null,
+  ): Promise<{ code: string; at: { x: number; y: number } | null } | null> {
+    const wide = cropVideoRegion(frame, SET_CODE_REGION);
+    /*
+     * The strip around the passcode's own line comes first when it is known. It holds
+     * the set code and almost nothing else — where the wide band also holds the lower
+     * half of the artwork, which on a foil card thresholds into a field of speckle
+     * that the code disappears into.
+     */
+    const strip = line
+      ? cropVideoRegion(frame, lineBand(frame.height, line.y, line.height), { scale: 3 })
+      : null;
     const readings: string[] = [];
-    for (const [canvas, mode] of [
+    for (const [crop, mode] of [
+      ...(strip ? ([[strip, SET_CODE_MODE], [strip, SET_CODE_SPARSE_MODE]] as const) : []),
       [wide, SET_CODE_MODE],
       [wide, SET_CODE_SPARSE_MODE],
       [guideCrop, SET_CODE_MODE],
     ] as const) {
-      const text = await scanner.read(canvas, mode);
-      const cleaned = text.replace(/\s+/g, ' ').trim();
+      const reading = await scanner.read(crop.canvas, mode, detectRarityRef.current);
+      const cleaned = reading.text.replace(/\s+/g, ' ').trim();
       if (cleaned) readings.push(cleaned);
-      const code = extractSetCode(text, card);
+      const code = extractSetCode(reading.text, card);
       if (code) {
         setSetReading(`Set gelesen: ${code}`);
-        return code;
+        // Where the code sits is the second anchor the rarity measurement needs.
+        const word = setCodeWord(reading.words, code);
+        return { code, at: word ? wordCentre(word, crop) : null };
       }
     }
     // Nothing usable: show the raw text, so a failure can be diagnosed from the
     // screen instead of guessed at.
     setSetReading(readings.length > 0 ? `Set nicht erkannt in: ${readings.join(' / ').slice(0, 60)}` : null);
     return null;
+  }
+
+  /**
+   * Works out the rarity from how the card looks.
+   *
+   * Everything needed to place the card in the picture is already in hand: the
+   * passcode was read at its bottom left, the set code at its bottom right. Two known
+   * points on a rectangle of known proportions fix the whole card, and with that the
+   * name strip and the artwork can be sampled in colour.
+   *
+   * Returns null whenever that chain breaks — a missing anchor, a card whose top is
+   * outside the picture — and the choice then stays where it was before: with the
+   * user. The camera never overrules a tap and never guesses when two rarities look
+   * the same.
+   */
+  async function measureRarity(
+    source: HTMLVideoElement,
+    frame: Frame,
+    passcodeAt: { x: number; y: number } | null,
+    setCodeAt: { x: number; y: number } | null,
+    candidates: string[],
+  ): Promise<RarityDecision | null> {
+    if (!detectRarityRef.current || candidates.length < 2) return null;
+    if (!passcodeAt || !setCodeAt) return null;
+
+    const card = cardFrameFromAnchors(passcodeAt, setCodeAt);
+    if (!card) return null;
+    if (!regionsVisible(card, frame.width, frame.height, RARITY_REGIONS)) {
+      setSetReading((line) => (line ? `${line} · Rarity: Karte nicht ganz im Bild` : null));
+      return null;
+    }
+
+    const looks: Look[] = [];
+    for (let sample = 0; sample < RARITY_SAMPLES; sample += 1) {
+      const shot = sample === 0 ? frame : captureFrame(source);
+      const name = samplePixels(shot, boundingBoxOnCard(card, NAME_REGION));
+      const art = samplePatch(shot, boundingBoxOnCard(card, ART_REGION));
+      const textbox = samplePixels(shot, boundingBoxOnCard(card, TEXTBOX_REGION));
+      if (name && art && textbox) looks.push(measureLook(name, art, textbox));
+      if (sample < RARITY_SAMPLES - 1) await wait(RARITY_GAP_MS);
+    }
+    if (looks.length === 0) return null;
+    const decision = decideRarity(candidates, combineLooks(looks));
+    // Says which way it went, so a wrong reading can be seen rather than discovered
+    // later in the collection.
+    setSetReading((line) =>
+      [
+        line,
+        decision.rarity
+          ? `Rarity erkannt: ${decision.rarity}`
+          : `Rarity nicht eindeutig: ${decision.ranked.slice(0, 2).map((guess) => guess.rarity).join(' / ')}`,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+    );
+    return decision;
   }
 
   /**
@@ -403,36 +549,45 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     const variants: PassVariant[] = manual ? PASS_VARIANTS : [passVariant(tick.current)];
     tick.current += 1;
 
+    /*
+     * One still picture for the whole attempt. Cutting each crop out of the running
+     * video meant the readings of a single attempt came from different moments —
+     * harmless while they were only compared with the card index, but the passcode
+     * and set code now also say *where* the card is, and two positions from two
+     * moments describe a card that was never there.
+     */
+    const frame = captureFrame(source);
+
     // Each distinct crop is built once and reused by every variant that wants it.
-    const crops = new Map<string, HTMLCanvasElement>();
-    function cropFor(variant: PassVariant): HTMLCanvasElement {
+    const crops = new Map<string, Crop>();
+    function cropFor(variant: PassVariant): Crop {
       const key = `${variant.wide}:${variant.invert}:${variant.bias}`;
       const existing = crops.get(key);
       if (existing) return existing;
       const options = { invert: variant.invert, bias: variant.bias };
-      const canvas = variant.wide
-        ? cropVideoRegion(source!, SET_CODE_REGION, options)
-        : cropRegion(source!, PASSCODE_REGION, options);
-      crops.set(key, canvas);
-      return canvas;
+      const crop = variant.wide
+        ? cropVideoRegion(frame, SET_CODE_REGION, options)
+        : cropRegion(frame, PASSCODE_REGION, options);
+      crops.set(key, crop);
+      return crop;
     }
 
-    showPreview(cropFor(variants[0]!));
+    showPreview(cropFor(variants[0]!).canvas);
 
     const readings: string[] = [];
     for (const [index, variant] of variants.entries()) {
+      const crop = cropFor(variant);
       if (manual) {
-        showPreview(cropFor(variant));
+        showPreview(crop.canvas);
         setReading(`Versuch ${index + 1} von ${variants.length}…`);
       }
-      const canvas = cropFor(variant);
-      const text = await scanner.read(canvas, variant.mode);
-      const cleaned = text.replace(/\s+/g, '');
+      const reading = await scanner.read(crop.canvas, variant.mode, detectRarityRef.current);
+      const cleaned = reading.text.replace(/\s+/g, '');
       if (cleaned) readings.push(cleaned);
 
       // Repairs only on a tap: see matchPasscode for why the continuous scan must
       // stay strict.
-      const match = matchPasscode(text, db, { repair: manual });
+      const match = matchPasscode(reading.text, db, { repair: manual });
       if (!match) continue;
       const card = match.card;
 
@@ -443,16 +598,30 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
         return;
       }
 
+      const word = passcodeWord(reading.words);
+      const passcodeAt = word ? wordCentre(word, crop) : null;
+      const line =
+        word && passcodeAt ? { y: passcodeAt.y, height: (word.y1 - word.y0) / crop.scale } : null;
+
       // Only now is a second pass worth its cost: we know which card, so the set
       // code can be checked against that card's printings.
-      let setCode: string | null = null;
+      let found: { code: string; at: { x: number; y: number } | null } | null = null;
       try {
-        setCode = await readSetCode(source, canvas, card, scanner);
+        found = await readSetCode(frame, crop, card, scanner, line);
       } catch {
         // A failed set read is a missing detail, not a failed scan.
       }
+      const setCode = found?.code ?? null;
+
+      let decision: RarityDecision | null = null;
+      try {
+        decision = await measureRarity(source, frame, passcodeAt, found?.at ?? null, raritiesIn(card, setCode));
+      } catch {
+        // Same rule as the set code: a detail that failed, not a failed scan.
+      }
+
       setReading(null);
-      record({ card, setCode }, match.exact);
+      record({ card, setCode }, match.exact, decision);
       return;
     }
 
@@ -613,22 +782,16 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
         <>
           <div className={flash ? 'scanview hit' : 'scanview'}>
             <video ref={video} playsInline muted autoPlay />
-            {/* Marks where the passcode has to sit for the crop to catch it. */}
-            <div
-              className="scanguide"
-              style={{
-                left: `${PASSCODE_REGION.x * 100}%`,
-                top: `${PASSCODE_REGION.y * 100}%`,
-                width: `${PASSCODE_REGION.width * 100}%`,
-                height: `${PASSCODE_REGION.height * 100}%`,
-              }}
-            />
+            {/* The whole card, not just its bottom: the set code sits in the opposite
+                corner from the passcode, and the rarity is read off the name and the
+                artwork. Everything the scanner needs is inside this outline. */}
+            <div className="scanguide" />
           </div>
 
           <p className="muted" style={{ fontSize: 12.5, margin: '8px 0 0' }}>
             {auto
-              ? 'Karte für Karte in den Kasten halten — jede wird automatisch erfasst. Der untere Kartenrand mit der 8-stelligen Nummer muss drin liegen.'
-              : 'Karte aufrecht halten, unteren Kartenrand in den Kasten legen, dann auf Scannen tippen.'}
+              ? 'Karte für Karte in den Rahmen halten — jede wird automatisch erfasst. Ganze Karte ins Bild: unten die Nummer und der Set-Code, oben der Name für die Rarity.'
+              : 'Ganze Karte aufrecht in den Rahmen legen, dann auf Scannen tippen.'}
           </p>
 
           <div className="row">
@@ -638,8 +801,22 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
             <button onClick={() => setAuto((value) => !value)}>{auto ? 'Auto-Scan aus' : 'Auto-Scan an'}</button>
             {torchAvailable && <button onClick={toggleTorch}>{torch ? 'Licht aus' : 'Licht an'}</button>}
             <button onClick={() => setSound((value) => !value)}>{sound ? 'Ton aus' : 'Ton an'}</button>
+            <button onClick={() => setDetectRarity((value) => !value)}>
+              {detectRarity ? 'Rarity-Erkennung aus' : 'Rarity-Erkennung an'}
+            </button>
             <button onClick={finish}>Fertig</button>
           </div>
+
+          {/* A rarity collection is one rarity from front to back; saying so once
+              saves the rest of the taps. */}
+          {sessionRarity && (
+            <div className="notice" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span style={{ flex: 1 }}>Alle Karten dieser Sitzung: {sessionRarity}</span>
+              <button className="link" onClick={() => setSessionRarity(null)}>
+                aufheben
+              </button>
+            </div>
+          )}
 
           {feedback && <div className="notice">{feedback}</div>}
 
@@ -689,9 +866,10 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
                     {displayName(entry.result.card)}
                     {entry.result.setCode && <span className="muted"> · {entry.result.setCode}</span>}
                     {entry.result.rarity && <span className="muted"> · {entry.result.rarity}</span>}
+                    {entry.detected && <span className="muted"> · erkannt</span>}
                     {!entry.exact && <span className="muted"> · unsicher</span>}
                     {/* Only asked when the card exists at several rarities in that
-                        set — otherwise the answer is already known and taken. */}
+                        set, and then best guess first. */}
                     {!entry.undone && entry.choices.length > 0 && (
                       <span className="filters" style={{ marginTop: 4 }}>
                         {entry.choices.map((rarity) => (
@@ -704,6 +882,11 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
                             {rarity}
                           </button>
                         ))}
+                        {entry.result.rarity && entry.result.rarity !== sessionRarity && (
+                          <button className="chip" onClick={() => setSessionRarity(entry.result.rarity ?? null)}>
+                            merken
+                          </button>
+                        )}
                         {/* The prices per rarity are not in our data — see
                             src/lib/market.ts — so this goes where they are. */}
                         <a

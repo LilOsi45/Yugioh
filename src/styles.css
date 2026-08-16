@@ -621,11 +621,23 @@ footer.app {
   display: block;
 }
 
-/* Shows where the passcode has to sit for the crop to catch it. */
+/*
+ * The outline of a whole card, in the proportions of a real one (59 × 86 mm).
+ *
+ * It used to mark just the bottom strip, where the passcode is. That was too little
+ * for what the scanner reads now: the set code sits in the far corner, and the rarity
+ * is measured from the name and the artwork. Filling this outline puts all of it in
+ * front of the lens at once.
+ */
 .scanguide {
   position: absolute;
+  top: 5%;
+  bottom: 5%;
+  left: 50%;
+  transform: translateX(-50%);
+  aspect-ratio: 59 / 86;
   border: 2px solid var(--accent);
-  border-radius: 4px;
+  border-radius: 8px;
   box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
 }
 
