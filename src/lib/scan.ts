@@ -29,11 +29,87 @@ export function extractCard(text: string, db: Database): Card | null {
   return null;
 }
 
+export interface PasscodeMatch {
+  card: Card;
+  /** False when a digit had to be corrected to reach a known passcode. */
+  exact: boolean;
+}
+
+/** Every 8-digit string one substitution away from `run`. */
+function substitutions(run: string): string[] {
+  const out: string[] = [];
+  for (let position = 0; position < run.length; position += 1) {
+    for (let digit = 0; digit <= 9; digit += 1) {
+      const replacement = String(digit);
+      if (replacement === run[position]) continue;
+      out.push(run.slice(0, position) + replacement + run.slice(position + 1));
+    }
+  }
+  return out;
+}
+
+/** Every 8-digit string reachable by putting one digit back into a 7-digit run. */
+function insertions(run: string): string[] {
+  const out: string[] = [];
+  for (let position = 0; position <= run.length; position += 1) {
+    for (let digit = 0; digit <= 9; digit += 1) {
+      out.push(run.slice(0, position) + String(digit) + run.slice(position));
+    }
+  }
+  return out;
+}
+
+/**
+ * Like `extractCard`, but optionally willing to repair a single misread digit.
+ *
+ * Camera text recognition rarely returns a passcode perfectly wrong — it returns it
+ * *almost* right, one digit off or one digit dropped, and the exact match then finds
+ * nothing at all. Only about 14.500 of the 100 million eight-digit numbers are real
+ * passcodes, so a near miss usually has exactly one real card near it; when more
+ * than one is near, this gives up rather than guess.
+ *
+ * `repair` is off by default, and the continuous scan leaves it off on purpose. The
+ * same arithmetic that makes a repair usually right also means roughly one in a
+ * hundred junk readings lands next to some real passcode by chance — harmless when a
+ * person just tapped and is looking at the answer, but the continuous scan reads
+ * junk all day long, and a wrong card added unnoticed is worse than a card missed.
+ */
+export function matchPasscode(
+  text: string,
+  db: Database,
+  options: { repair?: boolean } = {},
+): PasscodeMatch | null {
+  const exact = extractCard(text, db);
+  if (exact) return { card: exact, exact: true };
+  if (!options.repair) return null;
+
+  const digitsOnly = text.replace(/\D/g, '');
+  for (const candidate of [text, digitsOnly]) {
+    for (const run of candidate.match(/\d{7,8}/g) ?? []) {
+      const neighbours = run.length === 8 ? substitutions(run) : insertions(run);
+      const found = new Map<number, Card>();
+      for (const neighbour of neighbours) {
+        const card = db.byPasscode.get(Number.parseInt(neighbour, 10));
+        if (card) found.set(card.id, card);
+        // Two different cards nearby means the read is not good enough to act on.
+        if (found.size > 1) break;
+      }
+      const only = [...found.values()][0];
+      if (found.size === 1 && only) return { card: only, exact: false };
+    }
+  }
+  return null;
+}
+
 /**
  * The set code printed next to the passcode: `PHNI-DE087`, `LOB-EN001`, `OP27-DE001`.
- * The dash is required — without it any digit run in the effect text would qualify.
+ * A set code is never alone: the card number follows it within a few characters.
+ * That, not the dash, is what separates `PHNI-DE087` from a word in the effect text.
  */
-const SET_CODE_RUN = /([A-Z0-9]{2,5})\s*-\s*[A-Z]{0,2}\s*\d{1,3}/g;
+const NUMBER_AFTER_CODE = 6;
+
+/** Shortest code we will look for inside a longer reading, to keep chance out. */
+const MIN_LOOSE_CODE = 3;
 
 /**
  * Characters OCR mixes up when it only has letter shapes to go on. Comparing two
@@ -59,31 +135,46 @@ function shape(code: string): string {
 /**
  * Reads which printing the scanned card is, from the same crop as the passcode.
  *
- * Validated twice over: the prefix has to be a set the *scanned card* was actually
- * printed in, which by construction is a set the index knows. Everything else is
- * discarded — an unrecorded printing is a small gap, a wrong one is bad data in the
- * collection forever.
+ * Searches the reading for the codes of the sets *this card* was printed in, rather
+ * than pulling out anything code-shaped and checking it afterwards. That way round
+ * survives the mess camera text recognition actually produces: a real read came back
+ * as `PHNI-DEO087`, and one stray letter was enough to make a strict `CODE-XX000`
+ * pattern find nothing at all. The card's own printings are a handful of short
+ * strings, so looking for them directly is both more forgiving and no less safe —
+ * the answer still has to be a set this card exists in.
+ *
+ * Ambiguity loses: if two printings both look like the reading, none is recorded.
+ * An unrecorded printing is a small gap, a wrong one is bad data forever.
  */
 export function extractSetCode(text: string, card: Card): string | null {
-  const codes = new Map<string, string>();
-  for (const printing of card.printings) codes.set(printing.set.code.toUpperCase(), printing.set.code);
+  const cleaned = text.toUpperCase().replace(/[^A-Z0-9]/g, '');
 
-  const byShape = new Map<string, string[]>();
-  for (const upper of codes.keys()) {
-    const key = shape(upper);
-    const bucket = byShape.get(key);
-    if (bucket) bucket.push(upper);
-    else byShape.set(key, [upper]);
+  /** Codes found in the reading, either as printed or through OCR's confusions. */
+  function search(haystack: string, asShape: boolean): Set<string> {
+    const hits = new Set<string>();
+    for (const printing of card.printings) {
+      const code = printing.set.code;
+      const upper = code.toUpperCase();
+      if (upper.length < MIN_LOOSE_CODE) {
+        // Too short to hunt for inside a noisy reading; demand it stands alone.
+        if (new RegExp(`\\b${upper}\\s*-`).test(text.toUpperCase())) hits.add(code);
+        continue;
+      }
+      const index = haystack.indexOf(asShape ? shape(upper) : upper);
+      if (index === -1) continue;
+      // The card number has to follow, or this is just letters that line up.
+      const tail = cleaned.slice(index + upper.length, index + upper.length + NUMBER_AFTER_CODE);
+      if (/\d/.test(tail)) hits.add(code);
+    }
+    return hits;
   }
 
-  for (const match of text.toUpperCase().matchAll(SET_CODE_RUN)) {
-    const prefix = match[1]!;
-    const exact = codes.get(prefix);
-    if (exact) return exact;
-
-    const near = byShape.get(shape(prefix));
-    // Two printings that look alike under OCR confusion: no way to pick, so don't.
-    if (near && near.length === 1) return codes.get(near[0]!) ?? null;
+  // A code that is in the reading exactly beats one that only resembles it: two
+  // printings can look alike under confusion, but only one can be spelled right.
+  for (const hits of [search(cleaned, false), search(shape(cleaned), true)]) {
+    const [only] = hits;
+    if (hits.size === 1 && only) return only;
+    if (hits.size > 1) return null;
   }
   return null;
 }
@@ -189,8 +280,18 @@ export function adaptiveThreshold(
   return out;
 }
 
+/**
+ * How hard to cut when deciding what is ink.
+ *
+ * Two settings, because no single one wins: a sharp frame reads best when the cut
+ * sits just under the local mean, while a soft or dim one needs a cut slightly above
+ * it or the already-faint strokes are thinned away to nothing. The scanner tries
+ * both rather than betting on the light being good.
+ */
+export const THRESHOLD_BIASES = [0.95, 1.02];
+
 /** Greyscale, adaptive threshold, optionally inverted for light-on-dark print. */
-export function preprocess(canvas: HTMLCanvasElement, invert = false): void {
+export function preprocess(canvas: HTMLCanvasElement, invert = false, bias = THRESHOLD_BIASES[0]!): void {
   const context = canvas.getContext('2d', { willReadFrequently: true });
   if (!context) return;
   const image = context.getImageData(0, 0, canvas.width, canvas.height);
@@ -202,7 +303,7 @@ export function preprocess(canvas: HTMLCanvasElement, invert = false): void {
     grey[p] = data[i]! * 0.299 + data[i + 1]! * 0.587 + data[i + 2]! * 0.114;
   }
 
-  const mask = adaptiveThreshold(grey, canvas.width, canvas.height);
+  const mask = adaptiveThreshold(grey, canvas.width, canvas.height, { bias });
   for (let p = 0; p < pixels; p += 1) {
     // Tesseract wants dark text on white.
     const value = invert ? 255 - mask[p]! : mask[p]!;
@@ -239,22 +340,39 @@ export const OCR_MODES: OcrMode[] = [
 export interface PassVariant {
   /** Invert the crop, for cards printing light on a dark border. */
   invert: boolean;
+  bias: number;
   mode: OcrMode;
 }
 
 /**
+ * Every combination worth trying, hardest-working first.
+ *
+ * A tap works through the whole list; the continuous scan takes one per tick. The
+ * plain crop comes first because that is what an ordinary card in ordinary light
+ * needs, and inversion last because it only helps the rare light-on-dark print.
+ */
+export const PASS_VARIANTS: PassVariant[] = [false, true].flatMap((invert) =>
+  THRESHOLD_BIASES.flatMap((bias) => OCR_MODES.map((mode) => ({ invert, bias, mode }))),
+);
+
+/** How many of the variants the continuous scan rotates through. */
+export const AUTO_VARIANTS = THRESHOLD_BIASES.length * OCR_MODES.length;
+
+/**
  * Which single combination the continuous scanner tries on a given tick.
  *
- * Trying every mode against both crops on every tick is what a tap does, and on a
- * phone that takes several seconds — far longer than the scan interval, so the
- * scanner would spend its whole life inside one attempt. Rotating through the
- * combinations one per tick keeps each attempt short while still covering all of
- * them within a couple of seconds, which is what the tap used to buy.
+ * Trying everything on every tick is what a tap does, and on a phone that takes
+ * several seconds — far longer than the scan interval, so the scanner would spend
+ * its whole life inside one attempt. Rotating keeps each attempt short while still
+ * covering the ground within a few seconds.
+ *
+ * The rotation deliberately stops short of the inverted crops: those exist for an
+ * unusual kind of printing, and spending half of every cycle on them would double
+ * how long an ordinary card waits. A tap still tries them.
  */
 export function passVariant(tick: number): PassVariant {
-  const modes = OCR_MODES.length;
-  const index = ((tick % (modes * 2)) + modes * 2) % (modes * 2);
-  return { invert: index >= modes, mode: OCR_MODES[index % modes]! };
+  const index = ((tick % AUTO_VARIANTS) + AUTO_VARIANTS) % AUTO_VARIANTS;
+  return PASS_VARIANTS[index]!;
 }
 
 /**
@@ -353,9 +471,9 @@ export function coverSourceRect(
 export function cropRegion(
   source: HTMLVideoElement,
   region: Rect = PASSCODE_REGION,
-  options: { invert?: boolean; scale?: number } = {},
+  options: { invert?: boolean; scale?: number; bias?: number } = {},
 ): HTMLCanvasElement {
-  const { invert = false, scale = 4 } = options;
+  const { invert = false, scale = 4, bias } = options;
   const { sx, sy, sw, sh } = coverSourceRect(
     source.videoWidth,
     source.videoHeight,
@@ -371,7 +489,7 @@ export function cropRegion(
   if (context && sw > 0 && sh > 0) {
     context.imageSmoothingQuality = 'high';
     context.drawImage(source, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-    preprocess(canvas, invert);
+    preprocess(canvas, invert, bias);
   }
   return canvas;
 }

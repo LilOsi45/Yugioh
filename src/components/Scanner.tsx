@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import {
   createScanner,
   cropRegion,
-  extractCard,
   extractSetCode,
+  matchPasscode,
   NO_MEMORY,
-  OCR_MODES,
+  PASS_VARIANTS,
   PASSCODE_REGION,
   passVariant,
   SET_CODE_MODE,
@@ -49,6 +49,8 @@ interface Entry {
   result: ScanResult;
   message: string;
   undone: boolean;
+  /** False when the passcode needed a repaired digit to match. */
+  exact: boolean;
 }
 
 /**
@@ -105,6 +107,8 @@ export function Scanner({ db, onCard, onUndo, onClose }: Props) {
   const [auto, setAuto] = useState(true);
   const [flash, setFlash] = useState(false);
   const [working, setWorking] = useState(false);
+  const [torch, setTorch] = useState(false);
+  const [typed, setTyped] = useState('');
   /* Proof of life: without these the scanner looks identical whether it is
      searching or dead, which is exactly how the last version failed. */
   const [checked, setChecked] = useState(0);
@@ -231,10 +235,13 @@ export function Scanner({ db, onCard, onUndo, onClose }: Props) {
     }
   }
 
-  function record(result: ScanResult) {
+  /** `exact` is false when a digit had to be repaired to reach a known card. */
+  function record(result: ScanResult, exact = true) {
     const message = onCardRef.current(result);
-    setFeedback(message);
-    setEntries((list) => [{ key: Date.now() + Math.random(), result, message, undone: false }, ...list].slice(0, 40));
+    setFeedback(exact ? message : `${message} — unsicher gelesen, bitte prüfen`);
+    setEntries((list) =>
+      [{ key: Date.now() + Math.random(), result, message, undone: false, exact }, ...list].slice(0, 40),
+    );
     celebrate();
   }
 
@@ -271,31 +278,38 @@ export function Scanner({ db, onCard, onUndo, onClose }: Props) {
     const scanner = ocr.current;
     if (!source || !scanner) return;
 
-    const variants: PassVariant[] = manual
-      ? [false, true].flatMap((invert) => OCR_MODES.map((mode) => ({ invert, mode })))
-      : [passVariant(tick.current)];
+    const variants: PassVariant[] = manual ? PASS_VARIANTS : [passVariant(tick.current)];
     tick.current += 1;
 
-    const crops = new Map<boolean, HTMLCanvasElement>();
-    function cropFor(invert: boolean): HTMLCanvasElement {
-      const existing = crops.get(invert);
+    // Each distinct crop is built once and reused by every variant that wants it.
+    const crops = new Map<string, HTMLCanvasElement>();
+    function cropFor(variant: PassVariant): HTMLCanvasElement {
+      const key = `${variant.invert}:${variant.bias}`;
+      const existing = crops.get(key);
       if (existing) return existing;
-      const canvas = cropRegion(source!, PASSCODE_REGION, { invert });
-      crops.set(invert, canvas);
+      const canvas = cropRegion(source!, PASSCODE_REGION, { invert: variant.invert, bias: variant.bias });
+      crops.set(key, canvas);
       return canvas;
     }
 
-    showPreview(cropFor(variants[0]!.invert));
+    showPreview(cropFor(variants[0]!));
 
     const readings: string[] = [];
-    for (const variant of variants) {
-      const canvas = cropFor(variant.invert);
+    for (const [index, variant] of variants.entries()) {
+      if (manual) {
+        showPreview(cropFor(variant));
+        setReading(`Versuch ${index + 1} von ${variants.length}…`);
+      }
+      const canvas = cropFor(variant);
       const text = await scanner.read(canvas, variant.mode);
       const cleaned = text.replace(/\s+/g, '');
       if (cleaned) readings.push(cleaned);
 
-      const card = extractCard(text, db);
-      if (!card) continue;
+      // Repairs only on a tap: see matchPasscode for why the continuous scan must
+      // stay strict.
+      const match = matchPasscode(text, db, { repair: manual });
+      if (!match) continue;
+      const card = match.card;
 
       const step = stepScan(memory.current, card.id, Date.now());
       memory.current = step.memory;
@@ -313,7 +327,7 @@ export function Scanner({ db, onCard, onUndo, onClose }: Props) {
         // A failed set read is a missing detail, not a failed scan.
       }
       setReading(null);
-      record({ card, setCode });
+      record({ card, setCode }, match.exact);
       return;
     }
 
@@ -398,6 +412,38 @@ export function Scanner({ db, onCard, onUndo, onClose }: Props) {
     setReading('Ausschnitt wird geprüft…');
   }
 
+  /**
+   * The camera light, where the browser offers it. A dim card bottom is the single
+   * most common reason a reading comes back as noise, and this fixes it at the
+   * source instead of asking the software to guess harder.
+   */
+  function toggleTorch() {
+    const track = stream.current?.getVideoTracks()[0];
+    if (!track) return;
+    const next = !torch;
+    track
+      .applyConstraints({ advanced: [{ torch: next } as MediaTrackConstraintSet] })
+      .then(() => setTorch(next))
+      .catch(() => setFeedback('Dieses Handy lässt das Licht über den Browser nicht schalten.'));
+  }
+
+  /** Torch support cannot be asked for up front; it shows up on the live track. */
+  const torchAvailable =
+    status === 'ready' && 'torch' in (stream.current?.getVideoTracks()[0]?.getCapabilities?.() ?? {});
+
+  /** The way out when the camera simply will not read a card: type the number. */
+  function addTyped() {
+    const digits = typed.replace(/\D/g, '');
+    if (!digits) return;
+    const card = db.byPasscode.get(Number.parseInt(digits, 10));
+    if (!card) {
+      setFeedback(`${digits} gehört zu keiner bekannten Karte.`);
+      return;
+    }
+    setTyped('');
+    record({ card, setCode: null });
+  }
+
   const counted = entries.filter((entry) => !entry.undone).length;
   const engineLine =
     engine === 'loading'
@@ -454,6 +500,7 @@ export function Scanner({ db, onCard, onUndo, onClose }: Props) {
               {working ? 'Lese…' : 'Jetzt scannen'}
             </button>
             <button onClick={() => setAuto((value) => !value)}>{auto ? 'Dauerscan aus' : 'Dauerscan an'}</button>
+            {torchAvailable && <button onClick={toggleTorch}>{torch ? 'Licht aus' : 'Licht an'}</button>}
             <button onClick={onClose}>Fertig</button>
           </div>
 
@@ -472,6 +519,26 @@ export function Scanner({ db, onCard, onUndo, onClose }: Props) {
           )}
           <canvas ref={preview} className="scanpreview" />
 
+          {/* If the camera will not read a card, the number under it still can be
+              typed — eight digits is faster than fighting the light. */}
+          <div className="row" style={{ marginTop: 8 }}>
+            <input
+              className="search"
+              type="text"
+              inputMode="numeric"
+              value={typed}
+              placeholder="Nummer eintippen, z. B. 68464358"
+              style={{ flex: 1, marginBottom: 0 }}
+              onChange={(event) => setTyped(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') addTyped();
+              }}
+            />
+            <button onClick={addTyped} disabled={typed.replace(/\D/g, '').length === 0}>
+              Hinzufügen
+            </button>
+          </div>
+
           {entries.length > 0 && (
             <div style={{ marginTop: 10 }}>
               {entries.map((entry) => (
@@ -479,6 +546,7 @@ export function Scanner({ db, onCard, onUndo, onClose }: Props) {
                   <span className={entry.undone ? 'muted struck' : undefined}>
                     {displayName(entry.result.card)}
                     {entry.result.setCode && <span className="muted"> · {entry.result.setCode}</span>}
+                    {!entry.exact && <span className="muted"> · unsicher</span>}
                   </span>
                   {onUndo && !entry.undone && (
                     <button className="link" onClick={() => undo(entry)}>
