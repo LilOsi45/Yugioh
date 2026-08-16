@@ -293,7 +293,17 @@ export function measureLook(name: Pixels, art: Pixels, textbox: Pixels): Look {
 }
 
 /** How much the artwork's colourfulness must swing between frames to count as foil. */
-const FLICKER_FULL = 0.06;
+const FLICKER_FULL = 0.12;
+
+/**
+ * How far the swing between frames may carry on its own.
+ *
+ * Deliberately short of what a rarity expects, so movement alone can never prove
+ * foil. A hand holding a phone never holds it still, and the sampled patch shifts
+ * with it; letting that count fully would turn every handheld Common into a Super
+ * Rare. It can lift a borderline reading, not decide one.
+ */
+const FLICKER_CEILING = 0.6;
 
 /**
  * Averages several frames of the same card, and uses the fact that they were taken at
@@ -316,7 +326,7 @@ export function combineLooks(looks: Look[]): Look {
     nameDark: mean((look) => look.nameDark),
     nameGold: mean((look) => look.nameGold),
     nameSilver: mean((look) => look.nameSilver),
-    artHolo: Math.min(1, Math.max(mean((look) => look.artHolo), flicker)),
+    artHolo: Math.min(1, Math.max(mean((look) => look.artHolo), Math.min(FLICKER_CEILING, flicker))),
     artChroma: mean((look) => look.artChroma),
   };
 }

@@ -111,10 +111,17 @@ describe('combineLooks', () => {
     artChroma: 0.4,
   };
 
-  it('counts a card whose colours swing between frames as foil', () => {
+  it('treats colours that swing between frames as a hint of foil', () => {
     // Ink does not change when the card tilts a little; foil does.
     const combined = combineLooks([still, { ...still, artChroma: 0.5 }]);
-    expect(combined.artHolo).toBeGreaterThan(0.8);
+    expect(combined.artHolo).toBeGreaterThan(still.artHolo);
+  });
+
+  it('never lets movement alone prove foil, since no hand holds a phone still', () => {
+    const swinging = combineLooks([still, { ...still, artChroma: 0.9 }]);
+    // Short of what any foil rarity expects (0.85 and up), so it cannot decide.
+    expect(swinging.artHolo).toBeLessThan(0.7);
+    expect(decideRarity(['Common', 'Super Rare'], swinging).rarity).toBeNull();
   });
 
   it('leaves a card that looks the same in every frame alone', () => {
