@@ -54,14 +54,17 @@ export const PASSCODE_ROW_HEIGHT = 0.016;
  *
  * The first is the strip it is actually printed in — right hand side, just above the
  * text box — with little else in it, so the reading comes back clean. The second is
- * the whole lower half, to absorb a card whose size was mis-estimated and cards that
- * print the code somewhere else. Neither reaches up into the artwork, and that is
- * deliberate: holographic foil thresholds into a field of speckle that a set code
- * disappears into.
+ * everything below the artwork, to absorb a card whose size was mis-estimated and
+ * cards that print the code somewhere else.
+ *
+ * Both stop short of the artwork, and that is the whole point. Measured on a foil
+ * card, a band starting a few hundredths higher reached into the holographic print and
+ * came back with `5 EEE 7 5 7 FARE` — foil thresholds into thousands of tiny shapes,
+ * and a set code does not survive being one of them.
  */
 export const SET_CODE_BANDS: Rect[] = [
-  { x: 0.35, y: 0.58, width: 0.65, height: 0.12 },
-  { x: 0, y: 0.5, width: 1, height: 0.5 },
+  { x: 0.4, y: 0.615, width: 0.6, height: 0.095 },
+  { x: 0, y: 0.62, width: 1, height: 0.38 },
 ];
 
 /** The card name, in the coloured strip above the artwork. */

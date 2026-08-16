@@ -3,20 +3,20 @@ import {
   captureFrame,
   createScanner,
   cropPixels,
-  cropRegion,
   cropVideoRegion,
   extractSetCode,
   matchPasscode,
   NO_MEMORY,
   PASS_VARIANTS,
-  PASSCODE_REGION,
   passcodeBand,
+  SET_CODE_SPAN,
+  TIGHT_BAND,
+  WIDE_BAND,
   passVariant,
   pointInFrame,
   samplePatch,
   samplePixels,
   SET_CODE_MODE,
-  SET_CODE_REGION,
   SET_CODE_SPARSE_MODE,
   stepScan,
   turnForMisses,
@@ -512,7 +512,13 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     rough: CardFrame | null,
     turn: Turn,
   ): Promise<{ code: string; at: { x: number; y: number } | null } | null> {
-    const wide = cropVideoRegion(frame, SET_CODE_REGION, { turn });
+    /*
+     * A band of the frame, not of the card: it holds the set code wherever on the card
+     * that is printed, and it does not depend on having guessed the card's size right.
+     * The card-space bands below are sharper when the geometry is good; this one is
+     * what catches the code when it is not.
+     */
+    const wide = cropVideoRegion(frame, passcodeBand(turn, SET_CODE_SPAN), { turn, scale: 3 });
     /*
      * The card's own lower band comes first when the geometry is known. It covers both
      * places a card can print its set code — under the artwork, or on the bottom line
@@ -657,12 +663,16 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
        * the card. Taking the whole frame instead would be simpler and worse: it drags
        * in the artwork, and a foil card's artwork is exactly where a reading drowns.
        */
-      const crop =
-        turn !== 0
-          ? cropVideoRegion(frame, passcodeBand(turn), { ...options, scale: variant.wide ? 2 : 3 })
-          : variant.wide
-            ? cropVideoRegion(frame, SET_CODE_REGION, options)
-            : cropRegion(frame, PASSCODE_REGION, options);
+      /*
+       * Two bands rather than a band and the viewfinder box. The box was a sensible
+       * crop while it marked where to put the passcode; now that the outline asks for
+       * the whole card, what it frames is mostly artwork. A narrow strip along the
+       * card's bottom edge and a wider fallback do the same job without that.
+       */
+      const crop = cropVideoRegion(frame, passcodeBand(turn, variant.wide ? WIDE_BAND : TIGHT_BAND), {
+        ...options,
+        scale: variant.wide ? 2 : 3,
+      });
       crops.set(key, crop);
       return crop;
     }

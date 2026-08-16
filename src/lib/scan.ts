@@ -564,24 +564,36 @@ export function coverSourceRect(
 export const SET_CODE_REGION: Rect = { x: 0, y: 0.45, width: 1, height: 0.55 };
 
 /**
- * That same band, for a card that is not standing upright.
+ * The strip of the frame the passcode is looked for in, turned with the card.
  *
- * Searching the whole frame instead is the obvious answer and a bad one: it drags the
- * artwork in, and a foil card's artwork thresholds into a field of speckle that a
- * passcode is never found in — measured, a turned foil card was not read at all that
- * way. The band does not have to be given up, only turned with the card. Which half
- * of the frame ends up at the bottom of a turned crop follows from how it is drawn.
+ * Two widths, and the narrow one matters more than it looks. The passcode sits in the
+ * last tenth of a card, well below the artwork — and the artwork is the enemy here:
+ * measured on a turned foil card, a band that reached up into it dropped the scan rate
+ * from about 65 attempts a minute to 15 and returned readings like `5555555555`.
+ * Holographic foil thresholds into thousands of tiny shapes, and the engine works
+ * through every one of them. Keeping the band below the artwork is what makes a foil
+ * card readable at all; the wider band stays as a second try for a card held further
+ * up the frame.
+ *
+ * Which side of the frame ends up at the bottom of a turned crop follows from how the
+ * crop is drawn: at a quarter turn the right, at three quarters the left, upside down
+ * the top.
  */
-export function passcodeBand(turn: Turn): Rect {
+/** How much of the frame each search takes: the passcode alone, or down to the set code. */
+export const TIGHT_BAND = 0.3;
+export const WIDE_BAND = 0.55;
+export const SET_CODE_SPAN = 0.45;
+
+export function passcodeBand(turn: Turn, span = 0.55): Rect {
   switch (turn) {
     case 90:
-      return { x: 0.45, y: 0, width: 0.55, height: 1 };
+      return { x: 1 - span, y: 0, width: span, height: 1 };
     case 180:
-      return { x: 0, y: 0, width: 1, height: 0.55 };
+      return { x: 0, y: 0, width: 1, height: span };
     case 270:
-      return { x: 0, y: 0, width: 0.55, height: 1 };
+      return { x: 0, y: 0, width: span, height: 1 };
     default:
-      return SET_CODE_REGION;
+      return { x: 0, y: 1 - span, width: 1, height: span };
   }
 }
 
