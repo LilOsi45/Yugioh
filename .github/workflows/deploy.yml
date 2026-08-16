@@ -35,6 +35,11 @@ jobs:
 
       - name: Fetch text recognition engine
         run: npm run fetch-ocr
+
+      # Last, so a short look at the tail of the log finds it: the artifact upload
+      # that follows the build buries anything printed earlier.
+      - name: Datenbericht
+        run: cat public/data/report.txt
         env:
           # The full cardinfo.php dump is a large JSON body to parse.
           NODE_OPTIONS: --max-old-space-size=4096

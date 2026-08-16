@@ -10,6 +10,7 @@
  *
  * The generated file is gitignored — CI regenerates it weekly before deploying.
  */
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -113,15 +114,26 @@ function reportOnPrintingPrices(cards: ApiCard[]): void {
     }
   }
 
-  // Cards printed at several rarities *in the same set* — exactly the case where the
-  // app has to ask which one you own, and where a price would settle it.
+  /*
+   * Cards printed at several rarities *in the same set* — exactly the case where the
+   * app has to ask which one you own.
+   *
+   * Printing the set code per rarity answers a second question: does the code on the
+   * card itself distinguish the rarities? If it did, the scanner could read the
+   * rarity instead of asking. Identical codes across rarities mean it cannot.
+   */
   const samples: string[] = [];
   for (const card of cards) {
     if (samples.length >= 4) break;
-    const bySet = new Map<string, { rarity: string; price: string }[]>();
+    const bySet = new Map<string, { rarity: string; price: string; code: string; rarityCode: string }[]>();
     for (const printing of card.card_sets ?? []) {
       const list = bySet.get(printing.set_code.split('-')[0] ?? '') ?? [];
-      list.push({ rarity: printing.set_rarity, price: printing.set_price ?? '' });
+      list.push({
+        rarity: printing.set_rarity,
+        price: printing.set_price ?? '',
+        code: printing.set_code,
+        rarityCode: printing.set_rarity_code ?? '',
+      });
       bySet.set(printing.set_code.split('-')[0] ?? '', list);
     }
     const multi = [...bySet.entries()].find(
@@ -132,16 +144,26 @@ function reportOnPrintingPrices(cards: ApiCard[]): void {
     samples.push(
       `    ${card.name} — cardmarket ${cardmarket}\n` +
         multi[1]
-          .map((entry) => `      ${multi[0]} ${entry.rarity}: set_price ${entry.price || '(leer)'}`)
+          .map(
+            (entry) =>
+              `      ${entry.rarity}: code ${entry.code}` +
+              ` | rarity_code ${entry.rarityCode || '(leer)'}` +
+              ` | price ${entry.price || '(leer)'}`,
+          )
           .join('\n'),
     );
   }
 
-  process.stdout.write(
+  mkdirSync(resolve(dirname(OUT_FILE)), { recursive: true });
+  const printingReport =
     `  printing prices: ${priced} of ${printings} printings carry a set_price ` +
-      `(${((priced / Math.max(1, printings)) * 100).toFixed(0)}%)\n` +
-      `  same card at several rarities in one set:\n${samples.join('\n')}\n`,
-  );
+    `(${((priced / Math.max(1, printings)) * 100).toFixed(0)}%)\n` +
+    `  same card at several rarities in one set:\n${samples.join('\n')}\n`;
+
+  process.stdout.write(printingReport);
+  // Also on disk: the build log buries this under a hundred lines of artifact
+  // upload, and it is the answer to "can the scanner read the rarity?".
+  writeFileSync(resolve(dirname(OUT_FILE), 'report.txt'), printingReport);
 }
 
 async function main(): Promise<void> {
