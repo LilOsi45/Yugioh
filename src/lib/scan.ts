@@ -338,6 +338,12 @@ export const OCR_MODES: OcrMode[] = [
 ];
 
 export interface PassVariant {
+  /**
+   * Read the whole camera frame instead of the viewfinder box. The box shows only
+   * the middle strip of what the camera captures, so a card held slightly off
+   * centre has its number outside it — visible to the sensor, invisible to the box.
+   */
+  wide: boolean;
   /** Invert the crop, for cards printing light on a dark border. */
   invert: boolean;
   bias: number;
@@ -345,18 +351,24 @@ export interface PassVariant {
 }
 
 /**
- * Every combination worth trying, hardest-working first.
+ * Every combination worth trying, most likely first.
  *
  * A tap works through the whole list; the continuous scan takes one per tick. The
- * plain crop comes first because that is what an ordinary card in ordinary light
- * needs, and inversion last because it only helps the rare light-on-dark print.
+ * sharp viewfinder crop of an ordinary card in ordinary light comes first, and
+ * inversion last because it only helps the rare light-on-dark print.
  */
 export const PASS_VARIANTS: PassVariant[] = [false, true].flatMap((invert) =>
-  THRESHOLD_BIASES.flatMap((bias) => OCR_MODES.map((mode) => ({ invert, bias, mode }))),
+  [false, true].flatMap((wide) =>
+    THRESHOLD_BIASES.flatMap((bias) => OCR_MODES.map((mode) => ({ wide, invert, bias, mode }))),
+  ),
 );
 
-/** How many of the variants the continuous scan rotates through. */
-export const AUTO_VARIANTS = THRESHOLD_BIASES.length * OCR_MODES.length;
+/**
+ * How many of the variants the continuous scan rotates through: everything except
+ * the inverted crops, which stay a tap away so an ordinary card is not made to wait
+ * behind them.
+ */
+export const AUTO_VARIANTS = 2 * THRESHOLD_BIASES.length * OCR_MODES.length;
 
 /**
  * Which single combination the continuous scanner tries on a given tick.
@@ -402,12 +414,20 @@ export async function createScanner(): Promise<Scanner> {
   const { createWorker } = await import('tesseract.js');
   const worker = await createWorker('eng');
 
+  // Switching parameters costs a round trip to the worker; consecutive reads in the
+  // same mode are common, so remember what is already set.
+  let current = '';
+
   return {
     read: async (canvas, mode) => {
-      await worker.setParameters({
-        tessedit_char_whitelist: mode.whitelist,
-        tessedit_pageseg_mode: mode.psm as never,
-      });
+      const wanted = `${mode.psm}:${mode.whitelist}`;
+      if (wanted !== current) {
+        await worker.setParameters({
+          tessedit_char_whitelist: mode.whitelist,
+          tessedit_pageseg_mode: mode.psm as never,
+        });
+        current = wanted;
+      }
       const result = await worker.recognize(canvas);
       return result.data.text;
     },

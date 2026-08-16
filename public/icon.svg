@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Set Finder">
+  <rect width="512" height="512" rx="96" fill="#7a5c1e" />
+  <!-- A card at a slight angle, the way one sits in front of the camera. -->
+  <g transform="rotate(-8 256 256)">
+    <rect x="150" y="104" width="212" height="304" rx="16" fill="#f4ead6" />
+    <rect x="176" y="132" width="160" height="128" rx="8" fill="#c9a882" />
+    <rect x="176" y="280" width="160" height="72" rx="6" fill="#fffdf6" />
+    <!-- The passcode strip: what the scanner actually reads. -->
+    <rect x="176" y="368" width="86" height="14" rx="4" fill="#7a5c1e" />
+  </g>
+</svg>

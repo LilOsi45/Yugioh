@@ -1,0 +1,19 @@
+{
+  "name": "YGO Set Finder",
+  "short_name": "Set Finder",
+  "description": "Sammlung scannen, Decks planen, Sets kaufen — offline nutzbar.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f6f6f8",
+  "theme_color": "#7a5c1e",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

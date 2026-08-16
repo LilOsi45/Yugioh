@@ -10,7 +10,10 @@ import { DEFAULT_FILTERS, type FilterState } from './components/Filters';
 import { ImportPanel } from './components/ImportPanel';
 import { ReprintRadar } from './components/ReprintRadar';
 import { SetList } from './components/SetList';
+import { StatsPanel } from './components/StatsPanel';
 import { Tabs, type Tab } from './components/Tabs';
+import { WantsPanel } from './components/WantsPanel';
+import { backupFilename, downloadBackup, fromBackup, toBackup } from './lib/backup';
 import { buildBuyPlan } from './lib/buyPlan';
 import {
   collectionFromDeck,
@@ -53,6 +56,7 @@ export function App() {
   const [library, setLibrary] = useState<SavedDeck[]>([]);
   const [building, setBuilding] = useState<SavedDeck | null>(null);
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
+  const [notice, setNotice] = useState<string | null>(null);
   const collectionInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -126,9 +130,44 @@ export function App() {
     globalThis.setTimeout(() => setCopied(false), 2000);
   }
 
+  /**
+   * One input for both jobs: a backup file restores everything, a decklist adds its
+   * cards. Telling them apart by content rather than by asking is one decision less
+   * on a phone.
+   */
   async function importCollectionFile(file: File) {
     if (!db) return;
-    updateCollection(mergeCollections(collection, collectionFromDeck(parseDeck(await file.text(), db))));
+    const text = await file.text();
+
+    if (text.includes('ygo-set-finder-backup')) {
+      try {
+        const backup = fromBackup(text);
+        const replace =
+          collection.size === 0 ||
+          globalThis.confirm(
+            'Sicherung einspielen:\n\nOK = deine jetzige Sammlung ersetzen\nAbbrechen = dazuzählen',
+          );
+        updateCollection(
+          pruneCollection(replace ? backup.collection : mergeCollections(collection, backup.collection), db),
+        );
+        if (backup.library.length > 0) {
+          updateLibrary(replace ? backup.library : [...backup.library, ...library]);
+        }
+        setNotice(
+          `Sicherung eingespielt: ${backup.collection.size} Karten, ${backup.library.length} Decks.`,
+        );
+      } catch (error) {
+        setNotice(error instanceof Error ? error.message : 'Die Datei konnte nicht gelesen werden.');
+      }
+      return;
+    }
+
+    updateCollection(mergeCollections(collection, collectionFromDeck(parseDeck(text, db))));
+  }
+
+  function exportBackup() {
+    downloadBackup(toBackup(collection, library), backupFilename());
+    setNotice('Sicherung heruntergeladen. Leg sie irgendwo ab, wo sie dein Handy nicht wegräumt.');
   }
 
   const analysis = useMemo(() => {
@@ -154,7 +193,7 @@ export function App() {
     <input
       ref={collectionInput}
       type="file"
-      accept=".ydk,.txt"
+      accept=".ydk,.txt,.json"
       hidden
       onChange={(event) => {
         const file = event.target.files?.[0];
@@ -273,6 +312,7 @@ export function App() {
             onBack={() => setBuilding(null)}
           />
         ) : (
+          <>
           <DeckLibrary
             library={library}
             db={db}
@@ -282,6 +322,8 @@ export function App() {
             onRemove={(id) => updateLibrary(removeDeck(library, id))}
             onRename={(id, name) => updateLibrary(renameDeck(library, id, name))}
           />
+          <WantsPanel library={library} db={db} collection={collection} />
+          </>
         ))}
 
       {db && tab === 'collection' && (
@@ -290,10 +332,16 @@ export function App() {
           <CollectionPanel
             db={db}
             collection={collection}
+            deckCount={library.length}
+            notice={notice}
+            onDismissNotice={() => setNotice(null)}
             onChange={updateCollection}
             onReset={() => updateCollection(EMPTY_COLLECTION)}
             onImport={() => collectionInput.current?.click()}
-          />
+            onExport={exportBackup}
+          >
+            <StatsPanel db={db} collection={collection} />
+          </CollectionPanel>
         </>
       )}
 

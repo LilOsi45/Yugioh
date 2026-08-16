@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { displayName } from '../lib/dataset';
 import { cardImageUrl } from '../lib/images';
 import { formatEuro } from '../lib/pricing';
@@ -21,9 +21,16 @@ import type { Card, Database } from '../lib/types';
 interface Props {
   db: Database;
   collection: Collection;
+  /** Shown in the backup line, so it is clear the decks travel with it. */
+  deckCount: number;
+  notice: string | null;
+  onDismissNotice: () => void;
   onChange: (next: Collection) => void;
   onReset: () => void;
   onImport: () => void;
+  onExport: () => void;
+  /** Rendered above the card list — anything below it is unreachable at 2000 rows. */
+  children?: ReactNode;
 }
 
 const SORTS: CollectionSort[] = ['set', 'type', 'name', 'price', 'count'];
@@ -36,7 +43,18 @@ type ListItem =
   | { kind: 'heading'; key: string; label: string; count: number }
   | { kind: 'row'; key: string; entry: CollectionEntry };
 
-export function CollectionPanel({ db, collection, onChange, onReset, onImport }: Props) {
+export function CollectionPanel({
+  db,
+  collection,
+  deckCount,
+  notice,
+  onDismissNotice,
+  onChange,
+  onReset,
+  onImport,
+  onExport,
+  children,
+}: Props) {
   const [scanning, setScanning] = useState(false);
   const [sort, setSort] = useState<CollectionSort>('set');
   const [query, setQuery] = useState('');
@@ -115,7 +133,7 @@ export function CollectionPanel({ db, collection, onChange, onReset, onImport }:
               Karten scannen
             </button>
             <button className="link" onClick={onImport}>
-              .ydk importieren
+              Datei einlesen
             </button>
             {all.length > 0 && (
               <button
@@ -129,6 +147,33 @@ export function CollectionPanel({ db, collection, onChange, onReset, onImport }:
             )}
           </div>
         )}
+
+        {notice && (
+          <div className="notice">
+            {notice}{' '}
+            <button className="link" onClick={onDismissNotice}>
+              ok
+            </button>
+          </div>
+        )}
+      </section>
+
+      {/* The collection lives only in this browser. Say so, and make the fix one tap
+          away — hours of scanning are not something to lose to a cleared cache. */}
+      <section className="panel">
+        <h2>Sicherung</h2>
+        <p className="muted" style={{ fontSize: 13, margin: '0 0 10px' }}>
+          Deine Sammlung liegt nur in diesem Browser. Wird er geleert oder das Handy gewechselt, ist sie
+          weg. Die Sicherungsdatei enthält {all.length} Karten und {deckCount} Decks.
+        </p>
+        <div className="row" style={{ marginTop: 0 }}>
+          <button onClick={onExport} disabled={all.length === 0 && deckCount === 0}>
+            Sicherung speichern
+          </button>
+          <button className="link" onClick={onImport}>
+            Sicherung einlesen
+          </button>
+        </div>
       </section>
 
       {scanning && (
@@ -144,6 +189,8 @@ export function CollectionPanel({ db, collection, onChange, onReset, onImport }:
         <h2>Nach Name hinzufügen</h2>
         <CardSearch db={db} onPick={addByName} />
       </section>
+
+      {children}
 
       <section className="panel">
         <h2>Deine Karten</h2>

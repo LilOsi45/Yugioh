@@ -9,6 +9,11 @@
       content="Deckliste einfügen und sehen, welche Sets welche Karten abdecken, was sie kosten und was demnächst neu aufgelegt wird."
     />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🃏</text></svg>" />
+    <!-- Installable on the home screen, so it opens like an app and works offline. -->
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./icon.svg" />
+    <meta name="theme-color" content="#7a5c1e" />
+    <meta name="mobile-web-app-capable" content="yes" />
   </head>
   <body>
     <div id="root"></div>

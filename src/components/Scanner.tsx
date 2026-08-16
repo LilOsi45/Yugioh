@@ -249,6 +249,11 @@ export function Scanner({ db, onCard, onUndo, onClose }: Props) {
     celebrate();
   }
 
+  /** Another copy of a card already in hand, without scanning it again. */
+  function again(entry: Entry) {
+    record(entry.result, entry.exact);
+  }
+
   function undo(entry: Entry) {
     onUndo?.(entry.result);
     setEntries((list) => list.map((item) => (item.key === entry.key ? { ...item, undone: true } : item)));
@@ -324,10 +329,13 @@ export function Scanner({ db, onCard, onUndo, onClose }: Props) {
     // Each distinct crop is built once and reused by every variant that wants it.
     const crops = new Map<string, HTMLCanvasElement>();
     function cropFor(variant: PassVariant): HTMLCanvasElement {
-      const key = `${variant.invert}:${variant.bias}`;
+      const key = `${variant.wide}:${variant.invert}:${variant.bias}`;
       const existing = crops.get(key);
       if (existing) return existing;
-      const canvas = cropRegion(source!, PASSCODE_REGION, { invert: variant.invert, bias: variant.bias });
+      const options = { invert: variant.invert, bias: variant.bias };
+      const canvas = variant.wide
+        ? cropVideoRegion(source!, SET_CODE_REGION, options)
+        : cropRegion(source!, PASSCODE_REGION, options);
       crops.set(key, canvas);
       return canvas;
     }
@@ -593,10 +601,19 @@ export function Scanner({ db, onCard, onUndo, onClose }: Props) {
                     {entry.result.setCode && <span className="muted"> · {entry.result.setCode}</span>}
                     {!entry.exact && <span className="muted"> · unsicher</span>}
                   </span>
-                  {onUndo && !entry.undone && (
-                    <button className="link" onClick={() => undo(entry)}>
-                      rückgängig
-                    </button>
+                  {!entry.undone && (
+                    <span className="num" style={{ display: 'flex', gap: 8 }}>
+                      {/* Three of the same card is one scan and a tap, not three
+                          passes in front of the lens. */}
+                      <button className="link" onClick={() => again(entry)}>
+                        +1
+                      </button>
+                      {onUndo && (
+                        <button className="link" onClick={() => undo(entry)}>
+                          rückgängig
+                        </button>
+                      )}
+                    </span>
                   )}
                 </div>
               ))}
