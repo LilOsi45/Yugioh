@@ -10,6 +10,7 @@
  *
  * The generated file is gitignored — CI regenerates it weekly before deploying.
  */
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -153,11 +154,16 @@ function reportOnPrintingPrices(cards: ApiCard[]): void {
     );
   }
 
-  process.stdout.write(
+  mkdirSync(resolve(dirname(OUT_FILE)), { recursive: true });
+  const printingReport =
     `  printing prices: ${priced} of ${printings} printings carry a set_price ` +
-      `(${((priced / Math.max(1, printings)) * 100).toFixed(0)}%)\n` +
-      `  same card at several rarities in one set:\n${samples.join('\n')}\n`,
-  );
+    `(${((priced / Math.max(1, printings)) * 100).toFixed(0)}%)\n` +
+    `  same card at several rarities in one set:\n${samples.join('\n')}\n`;
+
+  process.stdout.write(printingReport);
+  // Also on disk: the build log buries this under a hundred lines of artifact
+  // upload, and it is the answer to "can the scanner read the rarity?".
+  writeFileSync(resolve(dirname(OUT_FILE), 'report.txt'), printingReport);
 }
 
 async function main(): Promise<void> {
