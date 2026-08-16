@@ -17,6 +17,7 @@ import {
   type Scanner as OcrScanner,
 } from '../lib/scan';
 import { displayName } from '../lib/dataset';
+import { cardmarketUrl } from '../lib/market';
 import { formatEuro } from '../lib/pricing';
 import type { Card, Database } from '../lib/types';
 
@@ -703,6 +704,16 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
                             {rarity}
                           </button>
                         ))}
+                        {/* The prices per rarity are not in our data — see
+                            src/lib/market.ts — so this goes where they are. */}
+                        <a
+                          className="chip"
+                          href={cardmarketUrl(entry.result.card)}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                        >
+                          Preise ↗
+                        </a>
                       </span>
                     )}
                   </span>

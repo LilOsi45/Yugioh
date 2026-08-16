@@ -92,6 +92,58 @@ function reportOnData(index: RawDatabase): void {
   );
 }
 
+/**
+ * What `card_sets[].set_price` actually contains, measured rather than assumed.
+ *
+ * The collection wants to show what a *printing* is worth — a Secret Rare and a
+ * Common of the same card are wildly different — but the only per-card price we use
+ * is Cardmarket's, which is one number for the card regardless of rarity. This
+ * per-printing field is the only candidate for the difference, so before building
+ * anything on it: is it filled in, and does its magnitude look like the Cardmarket
+ * euro price or like something else entirely?
+ */
+function reportOnPrintingPrices(cards: ApiCard[]): void {
+  let printings = 0;
+  let priced = 0;
+
+  for (const card of cards) {
+    for (const printing of card.card_sets ?? []) {
+      printings += 1;
+      if (Number.parseFloat(printing.set_price ?? '0') > 0) priced += 1;
+    }
+  }
+
+  // Cards printed at several rarities *in the same set* — exactly the case where the
+  // app has to ask which one you own, and where a price would settle it.
+  const samples: string[] = [];
+  for (const card of cards) {
+    if (samples.length >= 4) break;
+    const bySet = new Map<string, { rarity: string; price: string }[]>();
+    for (const printing of card.card_sets ?? []) {
+      const list = bySet.get(printing.set_code.split('-')[0] ?? '') ?? [];
+      list.push({ rarity: printing.set_rarity, price: printing.set_price ?? '' });
+      bySet.set(printing.set_code.split('-')[0] ?? '', list);
+    }
+    const multi = [...bySet.entries()].find(
+      ([, list]) => new Set(list.map((entry) => entry.rarity)).size >= 3,
+    );
+    const cardmarket = card.card_prices?.[0]?.cardmarket_price ?? '?';
+    if (!multi) continue;
+    samples.push(
+      `    ${card.name} — cardmarket ${cardmarket}\n` +
+        multi[1]
+          .map((entry) => `      ${multi[0]} ${entry.rarity}: set_price ${entry.price || '(leer)'}`)
+          .join('\n'),
+    );
+  }
+
+  process.stdout.write(
+    `  printing prices: ${priced} of ${printings} printings carry a set_price ` +
+      `(${((priced / Math.max(1, printings)) * 100).toFixed(0)}%)\n` +
+      `  same card at several rarities in one set:\n${samples.join('\n')}\n`,
+  );
+}
+
 async function main(): Promise<void> {
   process.stdout.write('Fetching card data from YGOPRODeck...\n');
 
@@ -129,6 +181,7 @@ async function main(): Promise<void> {
       `  ${(json.length / 1024 / 1024).toFixed(1)} MB uncompressed\n`,
   );
   reportOnData(index);
+  reportOnPrintingPrices(apiCards);
 }
 
 main().catch((error: unknown) => {

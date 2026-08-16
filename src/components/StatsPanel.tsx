@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { displayName } from '../lib/dataset';
+import { cardmarketUrl } from '../lib/market';
 import { formatEuro } from '../lib/pricing';
 import { collectionValue, duplicates, PLAYSET, setProgress } from '../lib/stats';
 import { copyText, sparesAsText } from '../lib/tradeText';
@@ -49,7 +50,8 @@ export function StatsPanel({ db, collection }: Props) {
       {/* Said plainly rather than implied: the price is per card, not per printing,
           so a Secret Rare counts the same as a Common of the same card. */}
       <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
-        Richtwert von Cardmarket je Karte — Rarity fließt nicht in den Preis ein.
+        Richtwert von Cardmarket je Karte — Rarity fließt nicht ein, weil die Datenquelle nur einen Preis
+        pro Karte liefert. Auf den Namen tippen öffnet die echten Preise je Rarity bei Cardmarket.
       </p>
 
       <div className="filters">
@@ -112,7 +114,9 @@ export function StatsPanel({ db, collection }: Props) {
           value.top.map((entry) => (
             <div className="line" key={entry.card.id}>
               <span>
-                {displayName(entry.card)}
+                <a href={cardmarketUrl(entry.card)} target="_blank" rel="noreferrer noopener">
+                  {displayName(entry.card)}
+                </a>
                 {entry.count > 1 && <span className="muted"> ×{entry.count}</span>}
               </span>
               <span className="num">{formatEuro(entry.valueCents)}</span>
