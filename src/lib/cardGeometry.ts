@@ -122,8 +122,16 @@ export function cardFrameFromLine(
   return frameAt(centre, right, down, PASSCODE_ANCHOR);
 }
 
-/** How far the two ways of measuring the card may disagree before neither is used. */
-const SCALE_TOLERANCE = 1 / 3;
+/**
+ * How far the two ways of measuring the card may disagree before neither is used.
+ *
+ * Wide on purpose. The row height the text engine reports is not a measurement of the
+ * print — it depends on how the crop was thresholded and on how much space the engine
+ * gives ascenders — so the two numbers routinely differ by half. What this has to
+ * catch is the other case: a word picked up that is not the set code at all, which
+ * lands nowhere near. A factor of three separates those two cleanly.
+ */
+const SCALE_TOLERANCE = 3;
 
 /**
  * Sharpens a frame using the set code, whose place across the card is known.
@@ -145,7 +153,7 @@ export function refineScale(rough: CardFrame, passcode: Point, setCode: Point): 
   const measured = along / (SET_CODE_X - PASSCODE_ANCHOR.x);
   if (!(measured > 0)) return null;
   const ratio = measured / width;
-  if (ratio < 1 - SCALE_TOLERANCE || ratio > 1 + SCALE_TOLERANCE) return null;
+  if (ratio < 1 / SCALE_TOLERANCE || ratio > SCALE_TOLERANCE) return null;
 
   const right: Point = { x: rough.right.x * ratio, y: rough.right.y * ratio };
   const down: Point = { x: rough.down.x * ratio, y: rough.down.y * ratio };

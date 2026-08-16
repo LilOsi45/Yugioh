@@ -569,7 +569,11 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     card: CardFrame | null,
     candidates: string[],
   ): Promise<RarityDecision | null> {
-    if (!detectRarityRef.current || candidates.length < 2 || !card) return null;
+    if (!detectRarityRef.current || candidates.length < 2) return null;
+    if (!card) {
+      setSetReading((line) => (line ? `${line} · Rarity: Karte nicht vermessbar` : null));
+      return null;
+    }
     if (!regionsVisible(card, frame.width, frame.height, RARITY_REGIONS)) {
       setSetReading((line) => (line ? `${line} · Rarity: Karte nicht ganz im Bild` : null));
       return null;
