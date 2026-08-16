@@ -26,14 +26,18 @@ export const CARD_ASPECT = 59 / 86;
 export const PASSCODE_ANCHOR: Point = { x: 0.115, y: 0.957 };
 
 /**
- * How far along the card's width the set code sits.
+ * Where the set code sits: right hand side, just above the card text box.
  *
- * Only the width is claimed. Cards print the set code either under the artwork or on
- * the bottom line, and which one it is varies — but both are hard against the right
- * edge, so *across* the card it is in the same place either way. Everything here that
- * uses the set code uses this and never a height.
+ * Confirmed off a real card rather than assumed — `MAGO-DE009` sits in the middle
+ * right of the card above the text box, a long way from the passcode down in the
+ * bottom left corner. An earlier version looked for it on the passcode's own line and
+ * so could never find it.
+ *
+ * Only the width is *relied* on: it is the same on every card and it is what the
+ * card's size is worked out from. The height only steers where to look.
  */
 export const SET_CODE_X = 0.855;
+export const SET_CODE_Y = 0.645;
 
 /**
  * How tall the passcode's row is, as a fraction of the card.
@@ -46,15 +50,19 @@ export const SET_CODE_X = 0.855;
 export const PASSCODE_ROW_HEIGHT = 0.016;
 
 /**
- * Where the set code is hunted for, in card coordinates: the bottom part of the card
- * across its full width.
+ * Where the set code is hunted for, in card coordinates. Two bands, tried in order.
  *
- * Deliberately generous, because the height is the part that is not known. What it
- * leaves out is the artwork, and that is the point: holographic foil turns into a
- * field of speckle under thresholding, and a set code inside that band is not read at
- * all.
+ * The first is the strip it is actually printed in — right hand side, just above the
+ * text box — with little else in it, so the reading comes back clean. The second is
+ * the whole lower half, to absorb a card whose size was mis-estimated and cards that
+ * print the code somewhere else. Neither reaches up into the artwork, and that is
+ * deliberate: holographic foil thresholds into a field of speckle that a set code
+ * disappears into.
  */
-export const SET_CODE_BAND: Rect = { x: 0, y: 0.55, width: 1, height: 0.45 };
+export const SET_CODE_BANDS: Rect[] = [
+  { x: 0.35, y: 0.58, width: 0.65, height: 0.12 },
+  { x: 0, y: 0.5, width: 1, height: 0.5 },
+];
 
 /** The card name, in the coloured strip above the artwork. */
 export const NAME_REGION: Rect = { x: 0.075, y: 0.032, width: 0.62, height: 0.062 };

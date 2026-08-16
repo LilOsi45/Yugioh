@@ -23,6 +23,7 @@ import {
   wordCentre,
   type Crop,
   type Frame,
+  type Rect,
   type LineBox,
   type PassVariant,
   type Reading,
@@ -38,7 +39,7 @@ import {
   RARITY_REGIONS,
   refineScale,
   regionsVisible,
-  SET_CODE_BAND,
+  SET_CODE_BANDS,
   TEXTBOX_REGION,
   type CardFrame,
 } from '../lib/cardGeometry';
@@ -114,6 +115,9 @@ const PREVIEW_WIDTH = 320;
  * moment apart say more than one, and hand tremor supplies the movement for free.
  */
 const RARITY_SAMPLES = 3;
+
+/** Everything the camera sees — what a turned card has to be looked for in. */
+const WHOLE_FRAME = { x: 0, y: 0, width: 1, height: 1 };
 const RARITY_GAP_MS = 70;
 
 interface Entry {
@@ -517,18 +521,18 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
      * the difference between reading the code and not: rainbow foil thresholds into a
      * field of speckle that swallows it.
      */
-    const band = rough
-      ? (() => {
-          const box = boundingBoxOnCard(rough, SET_CODE_BAND);
+    const bands = rough
+      ? SET_CODE_BANDS.map((region: Rect) => {
+          const box = boundingBoxOnCard(rough, region);
           return cropPixels(frame, { sx: box.x, sy: box.y, sw: box.width, sh: box.height }, {
             scale: 3,
             turn,
           });
-        })()
-      : null;
+        })
+      : [];
     const readings: string[] = [];
     for (const [crop, mode] of [
-      ...(band ? ([[band, SET_CODE_MODE], [band, SET_CODE_SPARSE_MODE]] as const) : []),
+      ...bands.flatMap((band: Crop) => [[band, SET_CODE_MODE] as const, [band, SET_CODE_SPARSE_MODE] as const]),
       [wide, SET_CODE_MODE],
       [wide, SET_CODE_SPARSE_MODE],
       [guideCrop, SET_CODE_MODE],
@@ -647,9 +651,19 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
       const existing = crops.get(key);
       if (existing) return existing;
       const options = { invert: variant.invert, bias: variant.bias, turn };
-      const crop = variant.wide
-        ? cropVideoRegion(frame, SET_CODE_REGION, options)
-        : cropRegion(frame, PASSCODE_REGION, options);
+      /*
+       * Both search regions assume a card standing upright: the lower band of the
+       * frame, and the viewfinder box. Turn the card a quarter and the passcode moves
+       * to the side of the picture, outside either of them — so as soon as the card is
+       * not upright, the whole frame is the search region. It costs more pixels and it
+       * is the only thing that can be right when the position is unknown.
+       */
+      const crop =
+        turn !== 0
+          ? cropVideoRegion(frame, WHOLE_FRAME, { ...options, scale: 1.5 })
+          : variant.wide
+            ? cropVideoRegion(frame, SET_CODE_REGION, options)
+            : cropRegion(frame, PASSCODE_REGION, options);
       crops.set(key, crop);
       return crop;
     }

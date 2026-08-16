@@ -9,8 +9,9 @@ import {
   RARITY_REGIONS,
   refineScale,
   regionsVisible,
-  SET_CODE_BAND,
+  SET_CODE_BANDS,
   SET_CODE_X,
+  SET_CODE_Y,
 } from '../src/lib/cardGeometry';
 
 /**
@@ -102,22 +103,26 @@ describe('refineScale', () => {
   });
 });
 
-describe('SET_CODE_BAND', () => {
+describe('SET_CODE_BANDS', () => {
   const frame = cardFrameFromLine(anchorAt(PASSCODE_ANCHOR), flatBaseline(), ROW)!;
+  const holds = (region: (typeof SET_CODE_BANDS)[number], at: { x: number; y: number }) => {
+    const box = boundingBoxOnCard(frame, region);
+    const point = anchorAt(at);
+    return (
+      point.x >= box.x && point.x <= box.x + box.width && point.y >= box.y && point.y <= box.y + box.height
+    );
+  };
 
-  it('covers both places a card prints its set code', () => {
-    const box = boundingBoxOnCard(frame, SET_CODE_BAND);
-    for (const y of [0.645, 0.957]) {
-      const point = anchorAt({ x: SET_CODE_X, y });
-      expect(point.x).toBeGreaterThanOrEqual(box.x);
-      expect(point.x).toBeLessThanOrEqual(box.x + box.width);
-      expect(point.y).toBeGreaterThanOrEqual(box.y);
-      expect(point.y).toBeLessThanOrEqual(box.y + box.height);
-    }
+  it('aims first at the strip above the text box, where the code is printed', () => {
+    expect(holds(SET_CODE_BANDS[0]!, { x: SET_CODE_X, y: SET_CODE_Y })).toBe(true);
+  });
+
+  it('falls back to the whole lower half, for a card that prints it elsewhere', () => {
+    expect(holds(SET_CODE_BANDS[1]!, { x: SET_CODE_X, y: 0.957 })).toBe(true);
   });
 
   it('leaves the artwork out, where foil turns into speckle', () => {
-    expect(SET_CODE_BAND.y).toBeGreaterThan(0.5);
+    for (const band of SET_CODE_BANDS) expect(band.y).toBeGreaterThanOrEqual(0.5);
   });
 });
 
