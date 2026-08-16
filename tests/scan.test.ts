@@ -7,6 +7,8 @@ import {
   NO_MEMORY,
   PASS_VARIANTS,
   passVariant,
+  SET_CODE_REGION,
+  videoSourceRect,
   stepScan,
 } from '../src/lib/scan';
 import { cardNamed, miniDatabase, setNamed } from './helpers';
@@ -98,6 +100,32 @@ describe('extractSetCode', () => {
 
   it('returns nothing for a card with no printings', () => {
     expect(extractSetCode('PHNI-DE087', cardNamed(db, 'Triple Tactics Talent'))).toBeNull();
+  });
+});
+
+describe('videoSourceRect', () => {
+  it('measures in camera pixels, not in what the viewfinder shows', () => {
+    // The whole lower band of a 1280x720 frame — including the sides that
+    // object-fit: cover hides, which is where the set code ends up.
+    expect(videoSourceRect(1280, 720, SET_CODE_REGION)).toEqual({
+      sx: 0,
+      sy: 324,
+      sw: 1280,
+      sh: 396,
+    });
+  });
+
+  it('clamps to the frame instead of reading past its edge', () => {
+    expect(videoSourceRect(100, 100, { x: 0.8, y: 0.8, width: 1, height: 1 })).toEqual({
+      sx: 80,
+      sy: 80,
+      sw: 20,
+      sh: 20,
+    });
+  });
+
+  it('survives a stream that has not started yet', () => {
+    expect(videoSourceRect(0, 0, SET_CODE_REGION)).toEqual({ sx: 0, sy: 0, sw: 0, sh: 0 });
   });
 });
 

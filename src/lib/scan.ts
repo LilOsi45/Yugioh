@@ -386,6 +386,9 @@ export const SET_CODE_MODE: OcrMode = {
   whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-',
 };
 
+/** The same, for sparse text: the set code alone on an otherwise empty band. */
+export const SET_CODE_SPARSE_MODE: OcrMode = { ...SET_CODE_MODE, psm: '11' };
+
 export interface Scanner {
   read: (canvas: HTMLCanvasElement, mode: OcrMode) => Promise<string>;
   stop: () => Promise<void>;
@@ -466,6 +469,67 @@ export function coverSourceRect(
     sw: clamp((guide.width * elementWidth) / scale, videoWidth - sx),
     sh: clamp((guide.height * elementHeight) / scale, videoHeight - sy),
   };
+}
+
+/**
+ * The band the set code is hunted in: the lower part of the *whole camera frame*.
+ *
+ * The passcode sits bottom left of a card and the set code bottom right, and the
+ * viewfinder shows only the middle strip of the sensor (`object-fit: cover` throws
+ * away roughly 60 % of the width). Framing so the number is comfortably inside the
+ * box therefore pushes the set code out of the picture — which is exactly the
+ * "passcode yes, set no" that came back from real use. The pixels exist; they were
+ * only being cropped away, so this pass reads them straight from the frame.
+ */
+export const SET_CODE_REGION: Rect = { x: 0, y: 0.45, width: 1, height: 0.55 };
+
+/**
+ * Crops a rectangle given in fractions of the *video frame*, ignoring how much of
+ * that frame the element happens to show.
+ */
+export function videoSourceRect(
+  videoWidth: number,
+  videoHeight: number,
+  region: Rect,
+): { sx: number; sy: number; sw: number; sh: number } {
+  const clamp = (value: number, max: number) => Math.min(Math.max(value, 0), max);
+  const sx = clamp(region.x * videoWidth, Math.max(0, videoWidth));
+  const sy = clamp(region.y * videoHeight, Math.max(0, videoHeight));
+  return {
+    sx,
+    sy,
+    sw: clamp(region.width * videoWidth, videoWidth - sx),
+    sh: clamp(region.height * videoHeight, videoHeight - sy),
+  };
+}
+
+function drawCrop(
+  source: HTMLVideoElement,
+  rect: { sx: number; sy: number; sw: number; sh: number },
+  invert: boolean,
+  scale: number,
+  bias: number | undefined,
+): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(rect.sw * scale));
+  canvas.height = Math.max(1, Math.round(rect.sh * scale));
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (context && rect.sw > 0 && rect.sh > 0) {
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(source, rect.sx, rect.sy, rect.sw, rect.sh, 0, 0, canvas.width, canvas.height);
+    preprocess(canvas, invert, bias);
+  }
+  return canvas;
+}
+
+/** Crop in frame coordinates — everything the camera sees, not just the viewfinder. */
+export function cropVideoRegion(
+  source: HTMLVideoElement,
+  region: Rect = SET_CODE_REGION,
+  options: { invert?: boolean; scale?: number; bias?: number } = {},
+): HTMLCanvasElement {
+  const { invert = false, scale = 2, bias } = options;
+  return drawCrop(source, videoSourceRect(source.videoWidth, source.videoHeight, region), invert, scale, bias);
 }
 
 export function cropRegion(
