@@ -9,9 +9,9 @@ import type { Rect } from './scan';
  * artwork of a rare printing throws rainbow highlights. To measure that, the app has
  * to know which pixels of the frame are the name and which are the artwork.
  *
- * It gets that for free from work already done: the passcode is read at the bottom
- * left of the card and the set code at the bottom right. Two known points on a
- * rectangle of known proportions fix its position, size and angle completely.
+ * The anchor for all of it is the passcode, which the scanner reads anyway. Its line
+ * gives the angle the card lies at and roughly how big it is; the set code, once
+ * found, sharpens the size.
  */
 
 export interface Point {
@@ -22,15 +22,50 @@ export interface Point {
 /** A card is 59 × 86 mm. */
 export const CARD_ASPECT = 59 / 86;
 
-/**
- * The two anchors in card coordinates (0..1 from the top left corner).
- *
- * Both sit on the bottom line of the card: the eight digit passcode on the left, the
- * set code on the right. Taken at the *centre* of each reading, which is what a word
- * box gives.
- */
+/** The passcode, bottom left, in card coordinates (0..1 from the top left corner). */
 export const PASSCODE_ANCHOR: Point = { x: 0.115, y: 0.957 };
-export const SET_CODE_ANCHOR: Point = { x: 0.855, y: 0.957 };
+
+/**
+ * Where the set code sits: right hand side, just above the card text box.
+ *
+ * Confirmed off a real card rather than assumed — `MAGO-DE009` sits in the middle
+ * right of the card above the text box, a long way from the passcode down in the
+ * bottom left corner. An earlier version looked for it on the passcode's own line and
+ * so could never find it.
+ *
+ * Only the width is *relied* on: it is the same on every card and it is what the
+ * card's size is worked out from. The height only steers where to look.
+ */
+export const SET_CODE_X = 0.855;
+export const SET_CODE_Y = 0.645;
+
+/**
+ * How tall the passcode's row is, as a fraction of the card.
+ *
+ * A rough figure, and knowingly so: it is measured by the text engine, which counts
+ * ascenders and descenders differently depending on how the crop was thresholded.
+ * It is used for two things that tolerate it — cutting a band that covers nearly half
+ * the card, and sanity-checking a better estimate — never for aiming at the name.
+ */
+export const PASSCODE_ROW_HEIGHT = 0.016;
+
+/**
+ * Where the set code is hunted for, in card coordinates. Two bands, tried in order.
+ *
+ * The first is the strip it is actually printed in — right hand side, just above the
+ * text box — with little else in it, so the reading comes back clean. The second is
+ * everything below the artwork, to absorb a card whose size was mis-estimated and
+ * cards that print the code somewhere else.
+ *
+ * Both stop short of the artwork, and that is the whole point. Measured on a foil
+ * card, a band starting a few hundredths higher reached into the holographic print and
+ * came back with `5 EEE 7 5 7 FARE` — foil thresholds into thousands of tiny shapes,
+ * and a set code does not survive being one of them.
+ */
+export const SET_CODE_BANDS: Rect[] = [
+  { x: 0.4, y: 0.615, width: 0.6, height: 0.095 },
+  { x: 0, y: 0.62, width: 1, height: 0.38 },
+];
 
 /** The card name, in the coloured strip above the artwork. */
 export const NAME_REGION: Rect = { x: 0.075, y: 0.032, width: 0.62, height: 0.062 };
@@ -45,6 +80,9 @@ export const ART_REGION: Rect = { x: 0.14, y: 0.19, width: 0.72, height: 0.4 };
  */
 export const TEXTBOX_REGION: Rect = { x: 0.1, y: 0.7, width: 0.8, height: 0.16 };
 
+/** The regions the rarity measurement needs, all of them. */
+export const RARITY_REGIONS: Rect[] = [NAME_REGION, ART_REGION, TEXTBOX_REGION];
+
 /**
  * A card located in frame pixels: where its top left corner is, and which way its
  * edges run. `right` spans the full card width, `down` the full height.
@@ -55,50 +93,82 @@ export interface CardFrame {
   down: Point;
 }
 
-/** Below this the two readings are too close together to be a real card. */
-const MIN_ANCHOR_DISTANCE = 24;
-
-/**
- * How far the card may be turned before the geometry is dropped. Text much more
- * slanted than this would not have been read in the first place, so a large angle
- * means the two boxes are not the two anchors.
- */
-const MAX_TILT = Math.tan((30 * Math.PI) / 180);
-
-/**
- * Builds the card's frame from the two readings.
- *
- * The direction from passcode to set code is the card's own x axis; its y axis is
- * the perpendicular pointing into the card body. Of the two perpendiculars the one
- * pointing *down* in the picture is taken: both anchors sit at the bottom of the
- * card, and a card turned far enough for that to be wrong would have been unreadable
- * anyway — text upside down is not recognised.
- *
- * Returns null rather than a guess whenever the two points cannot be those anchors.
- */
-export function cardFrameFromAnchors(passcode: Point, setCode: Point): CardFrame | null {
-  const dx = setCode.x - passcode.x;
-  const dy = setCode.y - passcode.y;
-  const distance = Math.hypot(dx, dy);
-  if (!Number.isFinite(distance) || distance < MIN_ANCHOR_DISTANCE) return null;
-  if (Math.abs(dy) > Math.abs(dx) * MAX_TILT) return null;
-
-  // The anchors span this fraction of the card width, so the full width follows.
-  const span = SET_CODE_ANCHOR.x - PASSCODE_ANCHOR.x;
-  const right: Point = { x: dx / span, y: dy / span };
-
-  // Perpendicular, scaled from width to height, pointing down the picture.
-  const sign = right.x >= 0 ? 1 : -1;
-  const down: Point = { x: (-right.y * sign) / CARD_ASPECT, y: (right.x * sign) / CARD_ASPECT };
-
+function frameAt(centre: Point, right: Point, down: Point, anchor: Point): CardFrame {
   return {
     origin: {
-      x: passcode.x - right.x * PASSCODE_ANCHOR.x - down.x * PASSCODE_ANCHOR.y,
-      y: passcode.y - right.y * PASSCODE_ANCHOR.x - down.y * PASSCODE_ANCHOR.y,
+      x: centre.x - right.x * anchor.x - down.x * anchor.y,
+      y: centre.y - right.y * anchor.x - down.y * anchor.y,
     },
     right,
     down,
   };
+}
+
+/**
+ * Builds the card's frame from the passcode's line alone.
+ *
+ * The text engine reports a baseline for every line it reads, and how tall the row
+ * is. That is enough on its own: the baseline gives the angle the card lies at, the
+ * row height gives roughly how big it is, and the passcode's known place on the card
+ * gives the position. One reading, no second anchor — which matters because the set
+ * code cannot be the second anchor when finding *it* is what the geometry is for.
+ *
+ * The size is the weak part, so this is used to cut a generous band and nothing
+ * finer. `refineScale` sharpens it once a second word is in hand.
+ */
+export function cardFrameFromLine(
+  centre: Point,
+  baseline: { x0: number; y0: number; x1: number; y1: number },
+  rowHeight: number,
+): CardFrame | null {
+  const dx = baseline.x1 - baseline.x0;
+  const dy = baseline.y1 - baseline.y0;
+  const length = Math.hypot(dx, dy);
+  if (!Number.isFinite(length) || length <= 0 || !(rowHeight > 0)) return null;
+
+  const height = rowHeight / PASSCODE_ROW_HEIGHT;
+  const width = height * CARD_ASPECT;
+  const right: Point = { x: (dx / length) * width, y: (dy / length) * width };
+  const down: Point = { x: (-right.y / width) * height, y: (right.x / width) * height };
+  return frameAt(centre, right, down, PASSCODE_ANCHOR);
+}
+
+/**
+ * How far the two ways of measuring the card may disagree before neither is used.
+ *
+ * Wide on purpose. The row height the text engine reports is not a measurement of the
+ * print — it depends on how the crop was thresholded and on how much space the engine
+ * gives ascenders — so the two numbers routinely differ by half. What this has to
+ * catch is the other case: a word picked up that is not the set code at all, which
+ * lands nowhere near. A factor of three separates those two cleanly.
+ */
+const SCALE_TOLERANCE = 3;
+
+/**
+ * Sharpens a frame using the set code, whose place across the card is known.
+ *
+ * Only the separation *along the card's width* is used, for the reason given at
+ * `SET_CODE_X`: that distance is long and the same on every card, while the height
+ * the set code is printed at is not something this code is willing to assume.
+ *
+ * Returns null when the two ways of measuring the card disagree badly. That means one
+ * of the readings is not what it was taken for, and a frame built on it would sample
+ * the wrong pixels — better to ask the user than to record a confident wrong answer.
+ */
+export function refineScale(rough: CardFrame, passcode: Point, setCode: Point): CardFrame | null {
+  const width = Math.hypot(rough.right.x, rough.right.y);
+  if (width <= 0) return null;
+  const along =
+    ((setCode.x - passcode.x) * rough.right.x + (setCode.y - passcode.y) * rough.right.y) / width;
+
+  const measured = along / (SET_CODE_X - PASSCODE_ANCHOR.x);
+  if (!(measured > 0)) return null;
+  const ratio = measured / width;
+  if (ratio < 1 / SCALE_TOLERANCE || ratio > SCALE_TOLERANCE) return null;
+
+  const right: Point = { x: rough.right.x * ratio, y: rough.right.y * ratio };
+  const down: Point = { x: rough.down.x * ratio, y: rough.down.y * ratio };
+  return frameAt(passcode, right, down, PASSCODE_ANCHOR);
 }
 
 /** A point of the card, in frame pixels. */
@@ -112,9 +182,9 @@ export function pointOnCard(frame: CardFrame, at: Point): Point {
 /**
  * An upright box in frame pixels around a region of the card.
  *
- * Upright rather than turned: sampling colour does not need the rotation undone, and
- * the small amount of neighbouring card a tilted region drags in is background of the
- * same print. Keeping it axis aligned means an ordinary `drawImage` can cut it.
+ * Upright rather than turned: the crop it feeds is itself turned to whichever quarter
+ * the card lies at, so what is left is a small tilt, and the extra card it drags in is
+ * print of the same kind.
  */
 export function boundingBoxOnCard(
   frame: CardFrame,
@@ -137,8 +207,8 @@ export function boundingBoxOnCard(
 /**
  * True when every region the rarity needs is actually inside the picture.
  *
- * The scanner is framed on the bottom of the card, so the top — where the name is —
- * is regularly outside the sensor. That is not a failure to report as an error; it
+ * The top of the card — where the name is — is regularly outside the sensor when
+ * someone frames on the bottom edge. That is not a failure to report as an error; it
  * simply means this card's rarity cannot be measured, and the choice stays with the
  * user.
  */
@@ -160,6 +230,3 @@ export function regionsVisible(
     );
   });
 }
-
-/** The regions the rarity measurement needs, all of them. */
-export const RARITY_REGIONS: Rect[] = [NAME_REGION, ART_REGION, TEXTBOX_REGION];

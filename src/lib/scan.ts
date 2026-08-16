@@ -411,10 +411,22 @@ export interface WordBox {
   y1: number;
 }
 
+/**
+ * A printed line, with the two things about it that say how the card lies: the
+ * baseline the engine fitted through it, and how tall its rows are.
+ */
+export interface LineBox {
+  text: string;
+  words: WordBox[];
+  baseline: { x0: number; y0: number; x1: number; y1: number };
+  rowHeight: number;
+}
+
 export interface Reading {
   text: string;
   /** Only filled in when the caller asked for boxes. */
   words: WordBox[];
+  lines: LineBox[];
 }
 
 export interface Scanner {
@@ -462,16 +474,22 @@ export async function createScanner(): Promise<Scanner> {
       }
       const result = await worker.recognize(canvas, {}, { text: true, blocks: withBoxes });
       const words: WordBox[] = [];
+      const lines: LineBox[] = [];
       for (const block of result.data.blocks ?? []) {
         for (const paragraph of block.paragraphs) {
           for (const line of paragraph.lines) {
-            for (const word of line.words) {
-              words.push({ text: word.text, ...word.bbox });
-            }
+            const inLine = line.words.map((word) => ({ text: word.text, ...word.bbox }));
+            words.push(...inLine);
+            lines.push({
+              text: line.text,
+              words: inLine,
+              baseline: line.baseline,
+              rowHeight: line.rowAttributes?.rowHeight ?? line.bbox.y1 - line.bbox.y0,
+            });
           }
         }
       }
-      return { text: result.data.text, words };
+      return { text: result.data.text, words, lines };
     },
     stop: async () => {
       await worker.terminate();
@@ -546,21 +564,37 @@ export function coverSourceRect(
 export const SET_CODE_REGION: Rect = { x: 0, y: 0.45, width: 1, height: 0.55 };
 
 /**
- * The strip of the frame that holds one printed line, given where a word on it was
- * found and how tall that word was.
+ * The strip of the frame the passcode is looked for in, turned with the card.
  *
- * The set code shares its line with the passcode, at the other end of it. Once the
- * passcode has been located there is no reason to hand the engine half the picture:
- * a band around that one line is sharper at the same cost, and — measured with a
- * foil card in front of the lens — it is the difference between reading the code and
- * not. Rainbow foil in the artwork turns into a field of speckle under thresholding,
- * and the set code drowns in it.
+ * Two widths, and the narrow one matters more than it looks. The passcode sits in the
+ * last tenth of a card, well below the artwork — and the artwork is the enemy here:
+ * measured on a turned foil card, a band that reached up into it dropped the scan rate
+ * from about 65 attempts a minute to 15 and returned readings like `5555555555`.
+ * Holographic foil thresholds into thousands of tiny shapes, and the engine works
+ * through every one of them. Keeping the band below the artwork is what makes a foil
+ * card readable at all; the wider band stays as a second try for a card held further
+ * up the frame.
+ *
+ * Which side of the frame ends up at the bottom of a turned crop follows from how the
+ * crop is drawn: at a quarter turn the right, at three quarters the left, upside down
+ * the top.
  */
-export function lineBand(frameHeight: number, centreY: number, wordHeight: number): Rect {
-  const half = Math.max(8, wordHeight * 2.2);
-  const y = Math.max(0, (centreY - half) / frameHeight);
-  const height = Math.min(1 - y, (half * 2) / frameHeight);
-  return { x: 0, y, width: 1, height };
+/** How much of the frame each search takes: the passcode alone, or down to the set code. */
+export const TIGHT_BAND = 0.3;
+export const WIDE_BAND = 0.55;
+export const SET_CODE_SPAN = 0.45;
+
+export function passcodeBand(turn: Turn, span = 0.55): Rect {
+  switch (turn) {
+    case 90:
+      return { x: 1 - span, y: 0, width: span, height: 1 };
+    case 180:
+      return { x: 0, y: 0, width: 1, height: span };
+    case 270:
+      return { x: 0, y: 0, width: span, height: 1 };
+    default:
+      return { x: 0, y: 1 - span, width: 1, height: span };
+  }
 }
 
 /**
@@ -616,57 +650,161 @@ export function captureFrame(video: HTMLVideoElement): Frame {
   };
 }
 
+/**
+ * How far the crop is turned before the engine sees it.
+ *
+ * Text recognition reads horizontal text and nothing else. A card lying on the table
+ * with the phone held over it is turned by a quarter, a half or three quarters as
+ * often as not, and in that state the passcode runs *down* the picture — invisible to
+ * the engine, however sharp the image is. Turning the crop is what makes those cards
+ * readable at all.
+ */
+export type Turn = 0 | 90 | 180 | 270;
+
+/** Tried in this order, starting from whichever turn last worked. */
+export const TURNS: Turn[] = [0, 90, 270, 180];
+
+/** Misses at one turn before the next is given a go. */
+export const PROBE_AFTER = 2;
+
+/**
+ * Which turn to try, given how many attempts in a row have found nothing.
+ *
+ * The turn is a property of how the cards are being handled, not of the card: someone
+ * working through a stack puts them down the same way every time. So the last turn
+ * that worked is tried first and keeps being tried, and only a run of misses starts
+ * looking elsewhere — which means the search costs something once per session rather
+ * than once per card.
+ */
+export function turnForMisses(misses: number, preferred: Turn): Turn {
+  if (misses < PROBE_AFTER) return preferred;
+  const from = Math.max(0, TURNS.indexOf(preferred));
+  const step = Math.floor(misses / PROBE_AFTER) % TURNS.length;
+  return TURNS[(from + step) % TURNS.length]!;
+}
+
 /** A crop, together with what it would take to find a point in it again in the frame. */
 export interface Crop {
   canvas: HTMLCanvasElement;
   sx: number;
   sy: number;
+  sw: number;
+  sh: number;
   scale: number;
+  turn: Turn;
+}
+
+/**
+ * Where a point of the crop sits in the whole frame.
+ *
+ * The inverse of how the crop was drawn, turn included — without it every position
+ * read off a turned crop would point somewhere else entirely, and the card geometry
+ * built on those positions would describe a card that is not there.
+ */
+export function pointInFrame(point: { x: number; y: number }, crop: Crop): { x: number; y: number } {
+  const wide = crop.sw * crop.scale;
+  const tall = crop.sh * crop.scale;
+  let u: number;
+  let v: number;
+  switch (crop.turn) {
+    case 90:
+      // Drawn as (u, v) -> (sh*scale - v, u).
+      u = point.y;
+      v = tall - point.x;
+      break;
+    case 180:
+      u = wide - point.x;
+      v = tall - point.y;
+      break;
+    case 270:
+      // Drawn as (u, v) -> (v, sw*scale - u).
+      u = wide - point.y;
+      v = point.x;
+      break;
+    default:
+      u = point.x;
+      v = point.y;
+  }
+  return { x: crop.sx + u / crop.scale, y: crop.sy + v / crop.scale };
 }
 
 /** Where a word sat in the whole frame, given the crop it was read from. */
 export function wordCentre(word: WordBox, crop: Crop): { x: number; y: number } {
-  return {
-    x: crop.sx + ((word.x0 + word.x1) / 2) / crop.scale,
-    y: crop.sy + ((word.y0 + word.y1) / 2) / crop.scale,
-  };
+  return pointInFrame({ x: (word.x0 + word.x1) / 2, y: (word.y0 + word.y1) / 2 }, crop);
+}
+
+export interface CropOptions {
+  invert?: boolean;
+  scale?: number;
+  bias?: number;
+  turn?: Turn;
 }
 
 function drawCrop(
   frame: Frame,
   rect: { sx: number; sy: number; sw: number; sh: number },
-  invert: boolean,
-  scale: number,
-  bias: number | undefined,
+  options: { invert: boolean; scale: number; turn: Turn; bias: number | undefined },
 ): Crop {
+  const { invert, scale, turn, bias } = options;
+  const wide = Math.max(1, Math.round(rect.sw * scale));
+  const tall = Math.max(1, Math.round(rect.sh * scale));
+  const turned = turn === 90 || turn === 270;
+
   const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(rect.sw * scale));
-  canvas.height = Math.max(1, Math.round(rect.sh * scale));
+  canvas.width = turned ? tall : wide;
+  canvas.height = turned ? wide : tall;
   const context = canvas.getContext('2d', { willReadFrequently: true });
   if (context && rect.sw > 0 && rect.sh > 0) {
     context.imageSmoothingQuality = 'high';
-    context.drawImage(frame.image, rect.sx, rect.sy, rect.sw, rect.sh, 0, 0, canvas.width, canvas.height);
+    if (turn === 90) {
+      context.translate(canvas.width, 0);
+      context.rotate(Math.PI / 2);
+    } else if (turn === 180) {
+      context.translate(canvas.width, canvas.height);
+      context.rotate(Math.PI);
+    } else if (turn === 270) {
+      context.translate(0, canvas.height);
+      context.rotate(-Math.PI / 2);
+    }
+    context.drawImage(frame.image, rect.sx, rect.sy, rect.sw, rect.sh, 0, 0, wide, tall);
+    context.setTransform(1, 0, 0, 1, 0, 0);
     preprocess(canvas, invert, bias);
   }
-  return { canvas, sx: rect.sx, sy: rect.sy, scale };
+  return { canvas, sx: rect.sx, sy: rect.sy, sw: rect.sw, sh: rect.sh, scale, turn };
+}
+
+/** Crop a rectangle given straight in frame pixels. */
+export function cropPixels(
+  frame: Frame,
+  rect: { sx: number; sy: number; sw: number; sh: number },
+  options: CropOptions = {},
+): Crop {
+  const { invert = false, scale = 3, bias, turn = 0 } = options;
+  const sx = Math.max(0, Math.min(rect.sx, frame.width));
+  const sy = Math.max(0, Math.min(rect.sy, frame.height));
+  return drawCrop(
+    frame,
+    { sx, sy, sw: Math.min(rect.sw, frame.width - sx), sh: Math.min(rect.sh, frame.height - sy) },
+    { invert, scale, turn, bias },
+  );
 }
 
 /** Crop in frame coordinates — everything the camera sees, not just the viewfinder. */
 export function cropVideoRegion(
   frame: Frame,
   region: Rect = SET_CODE_REGION,
-  options: { invert?: boolean; scale?: number; bias?: number } = {},
+  options: CropOptions = {},
 ): Crop {
-  const { invert = false, scale = 2, bias } = options;
-  return drawCrop(frame, videoSourceRect(frame.width, frame.height, region), invert, scale, bias);
+  const { invert = false, scale = 2, bias, turn = 0 } = options;
+  return drawCrop(frame, videoSourceRect(frame.width, frame.height, region), { invert, scale, turn, bias });
 }
 
 export function cropRegion(
   frame: Frame,
   region: Rect = PASSCODE_REGION,
-  options: { invert?: boolean; scale?: number; bias?: number } = {},
+  options: CropOptions = {},
 ): Crop {
-  const { invert = false, scale = 4, bias } = options;
+  const { invert = false, scale = 4, bias, turn = 0 } = options;
   const rect = coverSourceRect(
     frame.width,
     frame.height,
@@ -674,7 +812,7 @@ export function cropRegion(
     frame.elementHeight,
     region,
   );
-  return drawCrop(frame, rect, invert, scale, bias);
+  return drawCrop(frame, rect, { invert, scale, turn, bias });
 }
 
 /**

@@ -3,14 +3,19 @@ import {
   AUTO_VARIANTS,
   CLEAR_AFTER_MS,
   extractSetCode,
-  lineBand,
   matchPasscode,
   NO_MEMORY,
   PASS_VARIANTS,
   passVariant,
+  pointInFrame,
+  PROBE_AFTER,
   SET_CODE_REGION,
   stepScan,
+  turnForMisses,
+  TURNS,
   videoSourceRect,
+  type Crop,
+  type Turn,
 } from '../src/lib/scan';
 import { cardNamed, miniDatabase, setNamed } from './helpers';
 import type { Card } from '../src/lib/types';
@@ -104,27 +109,6 @@ describe('extractSetCode', () => {
   });
 });
 
-describe('lineBand', () => {
-  it('wraps the printed line the passcode was found on', () => {
-    const band = lineBand(720, 600, 20);
-    expect(band.x).toBe(0);
-    expect(band.width).toBe(1);
-    // 600 ± 44 px, as a fraction of the frame.
-    expect(band.y * 720).toBeCloseTo(556, 0);
-    expect(band.height * 720).toBeCloseTo(88, 0);
-  });
-
-  it('keeps a usable band when the reading is tiny', () => {
-    expect(lineBand(720, 600, 1).height * 720).toBeCloseTo(16, 0);
-  });
-
-  it('stays inside the frame for a line at the very bottom', () => {
-    const band = lineBand(720, 715, 20);
-    expect(band.y).toBeGreaterThanOrEqual(0);
-    expect(band.y + band.height).toBeLessThanOrEqual(1);
-  });
-});
-
 describe('videoSourceRect', () => {
   it('measures in camera pixels, not in what the viewfinder shows', () => {
     // The whole lower band of a 1280x720 frame — including the sides that
@@ -148,6 +132,72 @@ describe('videoSourceRect', () => {
 
   it('survives a stream that has not started yet', () => {
     expect(videoSourceRect(0, 0, SET_CODE_REGION)).toEqual({ sx: 0, sy: 0, sw: 0, sh: 0 });
+  });
+});
+
+describe('turnForMisses', () => {
+  it('keeps using the turn that last worked', () => {
+    for (let misses = 0; misses < PROBE_AFTER; misses += 1) {
+      expect(turnForMisses(misses, 90)).toBe(90);
+    }
+  });
+
+  it('starts looking elsewhere once nothing is coming back', () => {
+    expect(turnForMisses(PROBE_AFTER, 0)).not.toBe(0);
+  });
+
+  it('gets round every turn, so a stack put down any way is found', () => {
+    const seen = new Set<Turn>();
+    for (let misses = 0; misses < PROBE_AFTER * TURNS.length * 2; misses += 1) {
+      seen.add(turnForMisses(misses, 0));
+    }
+    expect([...seen].sort((a, b) => a - b)).toEqual([...TURNS].sort((a, b) => a - b));
+  });
+
+  it('comes back to the preferred turn on the way round', () => {
+    // Whatever is preferred is part of the cycle, not skipped.
+    const seen = new Set<Turn>();
+    for (let misses = 0; misses < PROBE_AFTER * TURNS.length; misses += 1) {
+      seen.add(turnForMisses(misses, 270));
+    }
+    expect(seen.has(270)).toBe(true);
+  });
+});
+
+describe('pointInFrame', () => {
+  /** A crop of a 200x100 patch at (40, 30), doubled in size, at each turn. */
+  const cropAt = (turn: Turn): Crop =>
+    ({ canvas: null as never, sx: 40, sy: 30, sw: 200, sh: 100, scale: 2, turn });
+
+  it('undoes an untouched crop', () => {
+    expect(pointInFrame({ x: 100, y: 50 }, cropAt(0))).toEqual({ x: 90, y: 55 });
+  });
+
+  it('undoes each quarter turn, so a word on a sideways card is where it looks', () => {
+    // The crop's own corners: whichever way it was turned, they are the patch's.
+    for (const turn of TURNS) {
+      const crop = cropAt(turn);
+      const wide = turn === 90 || turn === 270 ? crop.sh * crop.scale : crop.sw * crop.scale;
+      const tall = turn === 90 || turn === 270 ? crop.sw * crop.scale : crop.sh * crop.scale;
+      const corners = [
+        pointInFrame({ x: 0, y: 0 }, crop),
+        pointInFrame({ x: wide, y: 0 }, crop),
+        pointInFrame({ x: 0, y: tall }, crop),
+        pointInFrame({ x: wide, y: tall }, crop),
+      ];
+      const xs = corners.map((point) => point.x).sort((a, b) => a - b);
+      const ys = corners.map((point) => point.y).sort((a, b) => a - b);
+      expect(xs[0]).toBeCloseTo(40, 6);
+      expect(xs[3]).toBeCloseTo(240, 6);
+      expect(ys[0]).toBeCloseTo(30, 6);
+      expect(ys[3]).toBeCloseTo(130, 6);
+    }
+  });
+
+  it('turns a quarter clockwise, not anticlockwise', () => {
+    // Drawn at 90°, the patch's top left lands at the crop's top right.
+    const crop = cropAt(90);
+    expect(pointInFrame({ x: crop.sh * crop.scale, y: 0 }, crop)).toEqual({ x: 40, y: 30 });
   });
 });
 
