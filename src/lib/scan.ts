@@ -412,7 +412,18 @@ export interface Scanner {
  */
 export async function createScanner(): Promise<Scanner> {
   const { createWorker } = await import('tesseract.js');
-  const worker = await createWorker('eng');
+  /*
+   * Served by this app rather than a CDN, so the service worker can cache it and
+   * scanning keeps working without a signal. `gzip: false` is wrong for the file
+   * name we ship — it *is* gzipped — so the name carries the extension and the flag
+   * stays at its default.
+   */
+  const base = `${import.meta.env.BASE_URL}ocr/`;
+  const worker = await createWorker('eng', 1, {
+    workerPath: `${base}worker.min.js`,
+    corePath: base,
+    langPath: base,
+  });
 
   // Switching parameters costs a round trip to the worker; consecutive reads in the
   // same mode are common, so remember what is already set.

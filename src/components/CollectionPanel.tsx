@@ -3,16 +3,19 @@ import { displayName } from '../lib/dataset';
 import { cardImageUrl } from '../lib/images';
 import { formatEuro } from '../lib/pricing';
 import {
+  applyFilter,
   CATEGORY_LABELS,
   SORT_LABELS,
   filterEntries,
+  setsInCollection,
+  type CollectionFilter,
   groupByCategory,
   groupBySet,
   sortEntries,
   type CollectionEntry,
   type CollectionSort,
 } from '../lib/collectionView';
-import { addCopies, setOwnedTotal, UNKNOWN_SET, type Collection } from '../lib/collection';
+import { addCopies, holdingKey, setOwnedTotal, UNKNOWN_SET, type Collection } from '../lib/collection';
 import { CardSearch } from './CardSearch';
 import { Scanner, type ScanResult } from './Scanner';
 import { useVirtualList } from './useVirtualList';
@@ -29,6 +32,8 @@ interface Props {
   onReset: () => void;
   onImport: () => void;
   onExport: () => void;
+  /** What a scan session added, shown once it is closed. */
+  onSummary: (line: string) => void;
   /** Rendered above the card list — anything below it is unreachable at 2000 rows. */
   children?: ReactNode;
 }
@@ -53,12 +58,14 @@ export function CollectionPanel({
   onReset,
   onImport,
   onExport,
+  onSummary,
   children,
 }: Props) {
   const [scanning, setScanning] = useState(false);
   const [sort, setSort] = useState<CollectionSort>('set');
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
+  const [filter, setFilter] = useState<CollectionFilter>({});
 
   // Filtering thousands of rows on every keystroke is what made typing lag.
   useEffect(() => {
@@ -76,14 +83,15 @@ export function CollectionPanel({
   }, [collection, db]);
 
   const items = useMemo<ListItem[]>(() => {
-    const shown = sortEntries(filterEntries(all, debouncedQuery), sort);
+    const shown = sortEntries(applyFilter(filterEntries(all, debouncedQuery), filter), sort);
     const out: ListItem[] = [];
 
     if (sort === 'set') {
       for (const group of groupBySet(shown, db)) {
         const copies = group.entries.reduce((sum, entry) => sum + entry.count, 0);
         out.push({ kind: 'heading', key: `s:${group.code}`, label: group.name, count: copies });
-        for (const entry of group.entries) out.push({ kind: 'row', key: `${group.code}:${entry.card.id}`, entry });
+        for (const entry of group.entries)
+          out.push({ kind: 'row', key: `${group.code}:${entry.rarity ?? ''}:${entry.card.id}`, entry });
       }
     } else if (sort === 'type') {
       for (const group of groupByCategory(shown)) {
@@ -95,7 +103,7 @@ export function CollectionPanel({
       for (const entry of shown) out.push({ kind: 'row', key: String(entry.card.id), entry });
     }
     return out;
-  }, [all, debouncedQuery, sort, db]);
+  }, [all, debouncedQuery, filter, sort, db]);
 
   const heights = useMemo(
     () => items.map((item) => (item.kind === 'heading' ? HEADING_HEIGHT : ROW_HEIGHT)),
@@ -103,12 +111,14 @@ export function CollectionPanel({
   );
   const { ref, start, end, paddingTop, paddingBottom } = useVirtualList(heights);
 
+  const sets = useMemo(() => setsInCollection(all), [all]);
   const copies = all.reduce((sum, entry) => sum + entry.count, 0);
   const valueCents = all.reduce((sum, entry) => sum + entry.card.priceCents * entry.count, 0);
 
   /** Scans carry the printing they were read from; typed entries do not. */
   function addScanned(result: ScanResult): string {
-    const next = addCopies(collection, result.card.id, result.setCode ?? UNKNOWN_SET, 1);
+    const key = result.setCode ? holdingKey(result.setCode, result.rarity) : UNKNOWN_SET;
+    const next = addCopies(collection, result.card.id, key, 1);
     onChange(next);
     const total = next.get(result.card.id)?.total ?? 1;
     const where = result.setCode ? ` (${result.setCode})` : '';
@@ -180,7 +190,17 @@ export function CollectionPanel({
         <Scanner
           db={db}
           onCard={addScanned}
-          onUndo={(result) => onChange(addCopies(collection, result.card.id, result.setCode ?? UNKNOWN_SET, -1))}
+          onUndo={(result) =>
+            onChange(
+              addCopies(
+                collection,
+                result.card.id,
+                result.setCode ? holdingKey(result.setCode, result.rarity) : UNKNOWN_SET,
+                -1,
+              ),
+            )
+          }
+          onSummary={onSummary}
           onClose={() => setScanning(false)}
         />
       )}
@@ -211,6 +231,56 @@ export function CollectionPanel({
                 </button>
               ))}
             </div>
+
+            {/* Narrowing, separate from sorting: at two thousand cards the useful
+                questions are "what can I trade" and "what still needs sorting". */}
+            <div className="filters" style={{ marginTop: 6 }}>
+              <button
+                className="chip"
+                aria-pressed={Boolean(filter.doublesOnly)}
+                onClick={() => setFilter((current) => ({ ...current, doublesOnly: !current.doublesOnly }))}
+              >
+                Doubles
+              </button>
+              <button
+                className="chip"
+                aria-pressed={Boolean(filter.withoutSet)}
+                onClick={() => setFilter((current) => ({ ...current, withoutSet: !current.withoutSet }))}
+              >
+                Ohne Set
+              </button>
+              {(Object.keys(CATEGORY_LABELS) as (keyof typeof CATEGORY_LABELS)[]).map((category) => (
+                <button
+                  key={category}
+                  className="chip"
+                  aria-pressed={filter.category === category}
+                  onClick={() =>
+                    setFilter((current) => ({
+                      ...current,
+                      category: current.category === category ? null : category,
+                    }))
+                  }
+                >
+                  {CATEGORY_LABELS[category]}
+                </button>
+              ))}
+              {sets.length > 0 && (
+                <select
+                  className="chip"
+                  value={filter.setCode ?? ''}
+                  onChange={(event) =>
+                    setFilter((current) => ({ ...current, setCode: event.target.value || null }))
+                  }
+                >
+                  <option value="">Alle Sets</option>
+                  {sets.map((code) => (
+                    <option key={code} value={code}>
+                      {code}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
           </>
         )}
 
@@ -240,6 +310,7 @@ export function CollectionPanel({
                     />
                     <span className="owned-name">
                       {displayName(item.entry.card)}
+                      {item.entry.rarity && <span className="muted"> · {item.entry.rarity}</span>}
                       <br />
                       <span className="muted" style={{ fontSize: 12.5 }}>
                         je{' '}

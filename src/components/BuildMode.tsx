@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { applyScannedCard, deckProgress, stillMissing, type SavedDeck } from '../lib/library';
-import { addCopies, collectionTotals, UNKNOWN_SET } from '../lib/collection';
+import { addCopies, collectionTotals, holdingKey, UNKNOWN_SET } from '../lib/collection';
 import { parseDeck } from '../lib/import';
 import { displayName } from '../lib/dataset';
 import { deckNeeds } from '../lib/setFinder';
@@ -34,10 +34,15 @@ export function BuildMode({ saved, db, collection, onChange, onBack }: Props) {
   const missing = stillMissing(needs);
   const percent = Math.round(progress.ratio * 100);
 
+  /** Where a scanned copy is filed: set and rarity when known, otherwise nowhere. */
+  function keyFor(result: ScanResult): string {
+    return result.setCode ? holdingKey(result.setCode, result.rarity) : UNKNOWN_SET;
+  }
+
   /** Returns the line shown to the user, so the scanner can echo what happened. */
   function addCard(result: ScanResult): string {
     const outcome = applyScannedCard(needs, totals, result.card, { keepOthers });
-    if (outcome.accepted) onChange(addCopies(collection, result.card.id, result.setCode ?? UNKNOWN_SET, 1));
+    if (outcome.accepted) onChange(addCopies(collection, result.card.id, keyFor(result), 1));
     return outcome.message;
   }
 
@@ -77,7 +82,7 @@ export function BuildMode({ saved, db, collection, onChange, onBack }: Props) {
         <Scanner
           db={db}
           onCard={addCard}
-          onUndo={(result) => onChange(addCopies(collection, result.card.id, result.setCode ?? UNKNOWN_SET, -1))}
+          onUndo={(result) => onChange(addCopies(collection, result.card.id, keyFor(result), -1))}
           onClose={() => setScanning(false)}
         />
       )}

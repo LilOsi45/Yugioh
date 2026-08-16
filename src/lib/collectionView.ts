@@ -1,13 +1,15 @@
 import { displayName } from './dataset';
 import { normalizeName } from './normalize';
-import { UNKNOWN_SET } from './collection';
+import { parseHoldingKey, UNKNOWN_SET } from './collection';
 import type { Card, Database } from './types';
 
 export interface CollectionEntry {
   card: Card;
   count: number;
-  /** Copies per set code, present once a printing has been recorded. */
+  /** Copies per printing key (`SET` or `SET|Rarity`), once one has been recorded. */
   bySet?: ReadonlyMap<string, number>;
+  /** Set when the row stands for one printing, as the set grouping produces. */
+  rarity?: string | null;
 }
 
 export type CollectionSort = 'set' | 'type' | 'name' | 'price' | 'count';
@@ -111,12 +113,14 @@ export function groupBySet(entries: CollectionEntry[], db: Database): SetGroup[]
   for (const entry of entries) {
     // No recorded printing at all: everything falls into the unknown bucket.
     const bySet = entry.bySet && entry.bySet.size > 0 ? entry.bySet : new Map([[UNKNOWN_SET, entry.count]]);
-    for (const [code, count] of bySet) {
+    for (const [key, count] of bySet) {
       if (count <= 0) continue;
-      const bucket = groups.get(code);
-      const scoped: CollectionEntry = { card: entry.card, count };
+      // Keys carry the rarity too; the group is the set, the rarity rides on the row.
+      const { setCode, rarity } = parseHoldingKey(key);
+      const bucket = groups.get(setCode);
+      const scoped: CollectionEntry = { card: entry.card, count, rarity };
       if (bucket) bucket.push(scoped);
-      else groups.set(code, [scoped]);
+      else groups.set(setCode, [scoped]);
     }
   }
 
@@ -125,7 +129,7 @@ export function groupBySet(entries: CollectionEntry[], db: Database): SetGroup[]
     .map(([code, list]) => ({
       code,
       name: code === UNKNOWN_SET ? 'Ohne Set' : (nameByCode.get(code) ?? code),
-      entries: list.sort(byName),
+      entries: list.sort((a, b) => byName(a, b) || (a.rarity ?? '').localeCompare(b.rarity ?? '')),
     }))
     // Unknown last: it is a to-do pile, not a set.
     .sort((a, b) =>
@@ -141,4 +145,55 @@ export function filterEntries(entries: CollectionEntry[], query: string): Collec
     const german = entry.card.nameDe ? normalizeName(entry.card.nameDe) : '';
     return normalizeName(entry.card.name).includes(needle) || german.includes(needle);
   });
+}
+
+export interface CollectionFilter {
+  /** Only cards held beyond a playset — the pile that can be traded away. */
+  doublesOnly?: boolean;
+  /** Only cards with no printing recorded — the ones still to be sorted out. */
+  withoutSet?: boolean;
+  category?: CardCategory | null;
+  /** Only cards held in this set, in any rarity. */
+  setCode?: string | null;
+}
+
+/** Copies beyond this many are spares; matches the doubles list in the stats. */
+const PLAYSET = 3;
+
+/**
+ * Narrows the collection by the questions actually asked of it: what can I trade,
+ * what still needs sorting, what is in this set, what type is it. Separate from the
+ * text search so both can apply at once.
+ */
+export function applyFilter(entries: CollectionEntry[], filter: CollectionFilter): CollectionEntry[] {
+  const { doublesOnly, withoutSet, category, setCode } = filter;
+  if (!doublesOnly && !withoutSet && !category && !setCode) return entries;
+
+  return entries.filter((entry) => {
+    if (doublesOnly && entry.count <= PLAYSET) return false;
+    if (category && cardCategory(entry.card) !== category) return false;
+
+    if (withoutSet || setCode) {
+      const keys = [...(entry.bySet?.keys() ?? [])];
+      const codes = keys.map((key) => parseHoldingKey(key).setCode);
+      // No breakdown at all counts as "no set recorded" — that is what it means.
+      const unrecorded = codes.length === 0 || codes.some((code) => code === UNKNOWN_SET);
+      if (withoutSet && !unrecorded) return false;
+      if (setCode && !codes.includes(setCode)) return false;
+    }
+    return true;
+  });
+}
+
+/** Set codes present in the collection, for the picker, most copies first. */
+export function setsInCollection(entries: CollectionEntry[]): string[] {
+  const counts = new Map<string, number>();
+  for (const entry of entries) {
+    for (const [key, count] of entry.bySet ?? []) {
+      const { setCode } = parseHoldingKey(key);
+      if (setCode === UNKNOWN_SET) continue;
+      counts.set(setCode, (counts.get(setCode) ?? 0) + count);
+    }
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([code]) => code);
 }

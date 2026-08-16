@@ -1,4 +1,4 @@
-import { UNKNOWN_SET, type Collection } from './collection';
+import { parseHoldingKey, UNKNOWN_SET, type Collection } from './collection';
 import type { Card, Database, SetInfo } from './types';
 
 /**
@@ -34,13 +34,20 @@ export function setProgress(collection: Collection, db: Database): SetProgress[]
   for (const [id, holding] of collection) {
     const card = db.byPasscode.get(id);
     if (!card) continue;
-    for (const [code, count] of holding.bySet) {
-      if (code === UNKNOWN_SET || count <= 0) continue;
-      const bucket = byCode.get(code) ?? { owned: 0, copies: 0, valueCents: 0 };
-      bucket.owned += 1;
+    // One card can sit in the same set at two rarities; for "how full is this set"
+    // that is still one card, so distinct cards are counted per set, not per key.
+    const setsOfCard = new Set<string>();
+    for (const [key, count] of holding.bySet) {
+      const { setCode } = parseHoldingKey(key);
+      if (setCode === UNKNOWN_SET || count <= 0) continue;
+      const bucket = byCode.get(setCode) ?? { owned: 0, copies: 0, valueCents: 0 };
+      if (!setsOfCard.has(setCode)) {
+        setsOfCard.add(setCode);
+        bucket.owned += 1;
+      }
       bucket.copies += count;
       bucket.valueCents += card.priceCents * count;
-      byCode.set(code, bucket);
+      byCode.set(setCode, bucket);
     }
   }
 

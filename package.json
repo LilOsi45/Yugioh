@@ -11,7 +11,8 @@
     "typecheck": "tsc -b --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "fetch-data": "tsx scripts/fetch-data.ts"
+    "fetch-data": "tsx scripts/fetch-data.ts",
+    "fetch-ocr": "tsx scripts/fetch-ocr.ts"
   },
   "dependencies": {
     "react": "^18.3.1",
