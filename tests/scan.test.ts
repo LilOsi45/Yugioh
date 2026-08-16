@@ -3,13 +3,14 @@ import {
   AUTO_VARIANTS,
   CLEAR_AFTER_MS,
   extractSetCode,
+  lineBand,
   matchPasscode,
   NO_MEMORY,
   PASS_VARIANTS,
   passVariant,
   SET_CODE_REGION,
-  videoSourceRect,
   stepScan,
+  videoSourceRect,
 } from '../src/lib/scan';
 import { cardNamed, miniDatabase, setNamed } from './helpers';
 import type { Card } from '../src/lib/types';
@@ -103,6 +104,27 @@ describe('extractSetCode', () => {
   });
 });
 
+describe('lineBand', () => {
+  it('wraps the printed line the passcode was found on', () => {
+    const band = lineBand(720, 600, 20);
+    expect(band.x).toBe(0);
+    expect(band.width).toBe(1);
+    // 600 ± 44 px, as a fraction of the frame.
+    expect(band.y * 720).toBeCloseTo(556, 0);
+    expect(band.height * 720).toBeCloseTo(88, 0);
+  });
+
+  it('keeps a usable band when the reading is tiny', () => {
+    expect(lineBand(720, 600, 1).height * 720).toBeCloseTo(16, 0);
+  });
+
+  it('stays inside the frame for a line at the very bottom', () => {
+    const band = lineBand(720, 715, 20);
+    expect(band.y).toBeGreaterThanOrEqual(0);
+    expect(band.y + band.height).toBeLessThanOrEqual(1);
+  });
+});
+
 describe('videoSourceRect', () => {
   it('measures in camera pixels, not in what the viewfinder shows', () => {
     // The whole lower band of a 1280x720 frame — including the sides that
@@ -139,16 +161,16 @@ describe('passVariant', () => {
     expect(seen.size).toBe(AUTO_VARIANTS);
   });
 
-  it('starts with the sharp viewfinder crop, so the common case is tried first', () => {
+  it('starts with the whole frame, which is where a fully framed card is read', () => {
     expect(passVariant(0)).toEqual(PASS_VARIANTS[0]);
     expect(passVariant(0).invert).toBe(false);
-    expect(passVariant(0).wide).toBe(false);
+    expect(passVariant(0).wide).toBe(true);
   });
 
-  it('gets to the whole-frame crop within one cycle, for a card held off centre', () => {
-    const wide = [];
-    for (let tick = 0; tick < AUTO_VARIANTS; tick += 1) if (passVariant(tick).wide) wide.push(tick);
-    expect(wide.length).toBe(AUTO_VARIANTS / 2);
+  it('gets to the sharper viewfinder crop within one cycle, for a card held close', () => {
+    const close = [];
+    for (let tick = 0; tick < AUTO_VARIANTS; tick += 1) if (!passVariant(tick).wide) close.push(tick);
+    expect(close.length).toBe(AUTO_VARIANTS / 2);
   });
 
   it('leaves the inverted crops to a tap, so an ordinary card is not made to wait', () => {

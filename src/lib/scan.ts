@@ -354,11 +354,12 @@ export interface PassVariant {
  * Every combination worth trying, most likely first.
  *
  * A tap works through the whole list; the continuous scan takes one per tick. The
- * sharp viewfinder crop of an ordinary card in ordinary light comes first, and
- * inversion last because it only helps the rare light-on-dark print.
+ * whole frame comes first: the viewfinder now outlines the entire card, so the number
+ * usually sits outside the middle strip the box shows. The sharper box crop follows
+ * for cards held close, and inversion last because it only helps light-on-dark print.
  */
 export const PASS_VARIANTS: PassVariant[] = [false, true].flatMap((invert) =>
-  [false, true].flatMap((wide) =>
+  [true, false].flatMap((wide) =>
     THRESHOLD_BIASES.flatMap((bias) => OCR_MODES.map((mode) => ({ wide, invert, bias, mode }))),
   ),
 );
@@ -401,8 +402,23 @@ export const SET_CODE_MODE: OcrMode = {
 /** The same, for sparse text: the set code alone on an otherwise empty band. */
 export const SET_CODE_SPARSE_MODE: OcrMode = { ...SET_CODE_MODE, psm: '11' };
 
+/** Where a single word sat in the picture that was read, in that picture's pixels. */
+export interface WordBox {
+  text: string;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+export interface Reading {
+  text: string;
+  /** Only filled in when the caller asked for boxes. */
+  words: WordBox[];
+}
+
 export interface Scanner {
-  read: (canvas: HTMLCanvasElement, mode: OcrMode) => Promise<string>;
+  read: (canvas: HTMLCanvasElement, mode: OcrMode, withBoxes?: boolean) => Promise<Reading>;
   stop: () => Promise<void>;
 }
 
@@ -430,7 +446,12 @@ export async function createScanner(): Promise<Scanner> {
   let current = '';
 
   return {
-    read: async (canvas, mode) => {
+    /*
+     * Word boxes are asked for only where they are used — locating the card for the
+     * rarity — because they make the worker serialise its whole layout tree back, and
+     * the passcode pass runs several times a second.
+     */
+    read: async (canvas, mode, withBoxes = false) => {
       const wanted = `${mode.psm}:${mode.whitelist}`;
       if (wanted !== current) {
         await worker.setParameters({
@@ -439,8 +460,18 @@ export async function createScanner(): Promise<Scanner> {
         });
         current = wanted;
       }
-      const result = await worker.recognize(canvas);
-      return result.data.text;
+      const result = await worker.recognize(canvas, {}, { text: true, blocks: withBoxes });
+      const words: WordBox[] = [];
+      for (const block of result.data.blocks ?? []) {
+        for (const paragraph of block.paragraphs) {
+          for (const line of paragraph.lines) {
+            for (const word of line.words) {
+              words.push({ text: word.text, ...word.bbox });
+            }
+          }
+        }
+      }
+      return { text: result.data.text, words };
     },
     stop: async () => {
       await worker.terminate();
@@ -515,6 +546,24 @@ export function coverSourceRect(
 export const SET_CODE_REGION: Rect = { x: 0, y: 0.45, width: 1, height: 0.55 };
 
 /**
+ * The strip of the frame that holds one printed line, given where a word on it was
+ * found and how tall that word was.
+ *
+ * The set code shares its line with the passcode, at the other end of it. Once the
+ * passcode has been located there is no reason to hand the engine half the picture:
+ * a band around that one line is sharper at the same cost, and — measured with a
+ * foil card in front of the lens — it is the difference between reading the code and
+ * not. Rainbow foil in the artwork turns into a field of speckle under thresholding,
+ * and the set code drowns in it.
+ */
+export function lineBand(frameHeight: number, centreY: number, wordHeight: number): Rect {
+  const half = Math.max(8, wordHeight * 2.2);
+  const y = Math.max(0, (centreY - half) / frameHeight);
+  const height = Math.min(1 - y, (half * 2) / frameHeight);
+  return { x: 0, y, width: 1, height };
+}
+
+/**
  * Crops a rectangle given in fractions of the *video frame*, ignoring how much of
  * that frame the element happens to show.
  */
@@ -534,57 +583,151 @@ export function videoSourceRect(
   };
 }
 
+/**
+ * One still picture, and the size of the element that was showing it.
+ *
+ * Every crop of a scan comes from the same still rather than from the running video.
+ * The readings of a single attempt then belong to the same moment — which they have
+ * to, now that the passcode and the set code are not just read but *located*, and
+ * their positions used to work out where the rest of the card is.
+ */
+export interface Frame {
+  image: CanvasImageSource;
+  width: number;
+  height: number;
+  elementWidth: number;
+  elementHeight: number;
+}
+
+export function captureFrame(video: HTMLVideoElement): Frame {
+  const width = Math.max(1, video.videoWidth);
+  const height = Math.max(1, video.videoHeight);
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (context) context.drawImage(video, 0, 0, width, height);
+  return {
+    image: canvas,
+    width,
+    height,
+    elementWidth: video.clientWidth,
+    elementHeight: video.clientHeight,
+  };
+}
+
+/** A crop, together with what it would take to find a point in it again in the frame. */
+export interface Crop {
+  canvas: HTMLCanvasElement;
+  sx: number;
+  sy: number;
+  scale: number;
+}
+
+/** Where a word sat in the whole frame, given the crop it was read from. */
+export function wordCentre(word: WordBox, crop: Crop): { x: number; y: number } {
+  return {
+    x: crop.sx + ((word.x0 + word.x1) / 2) / crop.scale,
+    y: crop.sy + ((word.y0 + word.y1) / 2) / crop.scale,
+  };
+}
+
 function drawCrop(
-  source: HTMLVideoElement,
+  frame: Frame,
   rect: { sx: number; sy: number; sw: number; sh: number },
   invert: boolean,
   scale: number,
   bias: number | undefined,
-): HTMLCanvasElement {
+): Crop {
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(rect.sw * scale));
   canvas.height = Math.max(1, Math.round(rect.sh * scale));
   const context = canvas.getContext('2d', { willReadFrequently: true });
   if (context && rect.sw > 0 && rect.sh > 0) {
     context.imageSmoothingQuality = 'high';
-    context.drawImage(source, rect.sx, rect.sy, rect.sw, rect.sh, 0, 0, canvas.width, canvas.height);
+    context.drawImage(frame.image, rect.sx, rect.sy, rect.sw, rect.sh, 0, 0, canvas.width, canvas.height);
     preprocess(canvas, invert, bias);
   }
-  return canvas;
+  return { canvas, sx: rect.sx, sy: rect.sy, scale };
 }
 
 /** Crop in frame coordinates — everything the camera sees, not just the viewfinder. */
 export function cropVideoRegion(
-  source: HTMLVideoElement,
+  frame: Frame,
   region: Rect = SET_CODE_REGION,
   options: { invert?: boolean; scale?: number; bias?: number } = {},
-): HTMLCanvasElement {
+): Crop {
   const { invert = false, scale = 2, bias } = options;
-  return drawCrop(source, videoSourceRect(source.videoWidth, source.videoHeight, region), invert, scale, bias);
+  return drawCrop(frame, videoSourceRect(frame.width, frame.height, region), invert, scale, bias);
 }
 
 export function cropRegion(
-  source: HTMLVideoElement,
+  frame: Frame,
   region: Rect = PASSCODE_REGION,
   options: { invert?: boolean; scale?: number; bias?: number } = {},
-): HTMLCanvasElement {
+): Crop {
   const { invert = false, scale = 4, bias } = options;
-  const { sx, sy, sw, sh } = coverSourceRect(
-    source.videoWidth,
-    source.videoHeight,
-    source.clientWidth,
-    source.clientHeight,
+  const rect = coverSourceRect(
+    frame.width,
+    frame.height,
+    frame.elementWidth,
+    frame.elementHeight,
     region,
   );
+  return drawCrop(frame, rect, invert, scale, bias);
+}
 
+/**
+ * Pixels of an upright box of the frame, in colour and untouched.
+ *
+ * Everything else here hands OCR a black-and-white picture; the rarity needs the
+ * opposite — the colours exactly as the camera saw them, since gold against silver is
+ * the whole question.
+ */
+export function samplePixels(
+  frame: Frame,
+  box: { x: number; y: number; width: number; height: number },
+  maxSide = 64,
+): ImageData | null {
+  const width = Math.round(Math.min(maxSide, Math.max(1, box.width)));
+  const height = Math.round(Math.min(maxSide, Math.max(1, box.height)));
+  if (box.width < 2 || box.height < 2) return null;
   const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(sw * scale));
-  canvas.height = Math.max(1, Math.round(sh * scale));
+  canvas.width = width;
+  canvas.height = height;
   const context = canvas.getContext('2d', { willReadFrequently: true });
-  if (context && sw > 0 && sh > 0) {
-    context.imageSmoothingQuality = 'high';
-    context.drawImage(source, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
-    preprocess(canvas, invert, bias);
-  }
-  return canvas;
+  if (!context) return null;
+  context.imageSmoothingQuality = 'high';
+  context.drawImage(frame.image, box.x, box.y, box.width, box.height, 0, 0, width, height);
+  return context.getImageData(0, 0, width, height);
+}
+
+/**
+ * A patch out of the middle of a region, at the camera's own resolution.
+ *
+ * The difference from `samplePixels` is the whole point of it: shrinking a region
+ * averages neighbouring pixels together, which is right for finding the colour of
+ * printed letters and fatal for foil. Measured on a rainbow test card, scaling the
+ * artwork down to 64 px turned brilliant speckle into flat grey — colourfulness
+ * dropped to 0.09, *below* the plain painted card's 0.50, because red, green and blue
+ * neighbours average to nothing. Foil is only foil at full resolution.
+ */
+export function samplePatch(
+  frame: Frame,
+  box: { x: number; y: number; width: number; height: number },
+  side = 96,
+): ImageData | null {
+  const width = Math.round(Math.min(side, box.width));
+  const height = Math.round(Math.min(side, box.height));
+  if (width < 8 || height < 8) return null;
+  const sx = box.x + (box.width - width) / 2;
+  const sy = box.y + (box.height - height) / 2;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) return null;
+  context.imageSmoothingEnabled = false;
+  context.drawImage(frame.image, sx, sy, width, height, 0, 0, width, height);
+  return context.getImageData(0, 0, width, height);
 }
