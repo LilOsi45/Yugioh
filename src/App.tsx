@@ -339,6 +339,7 @@ export function App() {
             onReset={() => updateCollection(EMPTY_COLLECTION)}
             onImport={() => collectionInput.current?.click()}
             onExport={exportBackup}
+            onSummary={setNotice}
           >
             <StatsPanel db={db} collection={collection} />
           </CollectionPanel>

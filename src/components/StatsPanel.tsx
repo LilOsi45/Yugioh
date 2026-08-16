@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { displayName } from '../lib/dataset';
 import { formatEuro } from '../lib/pricing';
 import { collectionValue, duplicates, PLAYSET, setProgress } from '../lib/stats';
+import { copyText, sparesAsText } from '../lib/tradeText';
 import type { Collection } from '../lib/collection';
 import type { Database } from '../lib/types';
 
@@ -24,10 +25,16 @@ const PAGE = 15;
 export function StatsPanel({ db, collection }: Props) {
   const [view, setView] = useState<View>('sets');
   const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
 
   const sets = useMemo(() => setProgress(collection, db), [collection, db]);
   const value = useMemo(() => collectionValue(collection, db), [collection, db]);
   const spares = useMemo(() => duplicates(collection, db), [collection, db]);
+
+  async function copySpares() {
+    const text = sparesAsText(spares);
+    setCopied((await copyText(text)) ? 'Doubles kopiert — fertig zum Einfügen in den Trade-Chat.' : text);
+  }
 
   if (collection.size === 0) return null;
 
@@ -38,6 +45,11 @@ export function StatsPanel({ db, collection }: Props) {
       <h2>Stats</h2>
       <p className="muted" style={{ fontSize: 13, margin: '0 0 8px' }}>
         {value.cards} Karten · {value.copies} Kopien · {formatEuro(value.totalCents)}
+      </p>
+      {/* Said plainly rather than implied: the price is per card, not per printing,
+          so a Secret Rare counts the same as a Common of the same card. */}
+      <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
+        Richtwert von Cardmarket je Karte — Rarity fließt nicht in den Preis ein.
       </p>
 
       <div className="filters">
@@ -116,6 +128,20 @@ export function StatsPanel({ db, collection }: Props) {
             <p className="muted" style={{ fontSize: 12.5, margin: '0 0 4px' }}>
               Kopien über {PLAYSET}×, also über ein volles Deckset hinaus.
             </p>
+            <div className="row" style={{ marginTop: 0, marginBottom: 6 }}>
+              <button onClick={() => void copySpares()}>Doubles kopieren</button>
+            </div>
+            {copied &&
+              (copied.startsWith('Doubles kopiert') ? (
+                <div className="notice">{copied}</div>
+              ) : (
+                <textarea
+                  readOnly
+                  rows={6}
+                  value={copied}
+                  onFocus={(event) => event.target.select()}
+                />
+              ))}
             {spares.slice(0, limit).map((entry) => (
               <div className="line" key={entry.card.id}>
                 <span>

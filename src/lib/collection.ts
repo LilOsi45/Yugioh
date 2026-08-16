@@ -19,6 +19,30 @@ export type Collection = ReadonlyMap<number, CardHolding>;
 /** Bucket for copies whose printing we do not know. */
 export const UNKNOWN_SET = '';
 
+/**
+ * Separates set code from rarity inside a holding key: `PHNI|Secret Rare`.
+ *
+ * Rarity rides along in the key rather than in a new field, so the stored shape
+ * stays `{passcode: {key: count}}` and every collection saved before this existed
+ * keeps working — a key without the separator simply means the rarity was never
+ * recorded. No migration, no version bump, nothing to lose.
+ *
+ * Worth being clear about what this does *not* buy: prices come from Cardmarket per
+ * *card*, not per printing, so knowing the rarity does not sharpen the value shown.
+ * It is recorded because it is what a binder is sorted by and what a trade turns on.
+ */
+const RARITY_SEPARATOR = '|';
+
+export function holdingKey(setCode: string, rarity?: string | null): string {
+  return rarity ? `${setCode}${RARITY_SEPARATOR}${rarity}` : setCode;
+}
+
+export function parseHoldingKey(key: string): { setCode: string; rarity: string | null } {
+  const at = key.indexOf(RARITY_SEPARATOR);
+  if (at === -1) return { setCode: key, rarity: null };
+  return { setCode: key.slice(0, at), rarity: key.slice(at + 1) || null };
+}
+
 const STORAGE_KEY = 'ygo-set-finder:collection:v2';
 /** Read once for migration; copies land in the unknown-set bucket. */
 const LEGACY_KEY = 'ygo-set-finder:collection:v1';

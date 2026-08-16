@@ -3,6 +3,8 @@ import { buildBuyPlan } from '../lib/buyPlan';
 import { collectionTotals, type Collection } from '../lib/collection';
 import { displayName } from '../lib/dataset';
 import { deckBudget, formatEuro } from '../lib/pricing';
+import { formatDaysUntil, upcomingReprints } from '../lib/reprints';
+import { copyText, needsAsText } from '../lib/tradeText';
 import { combinedNeeds } from '../lib/wants';
 import type { SavedDeck } from '../lib/library';
 import type { Database } from '../lib/types';
@@ -21,15 +23,27 @@ const PAGE = 12;
  */
 export function WantsPanel({ library, db, collection }: Props) {
   const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
 
-  const { missing, plan, budget } = useMemo(() => {
+  const { missing, plan, budget, reprints } = useMemo(() => {
     const needs = combinedNeeds(library, db, collectionTotals(collection));
     return {
       missing: needs.filter((need) => need.needed > 0),
       plan: buildBuyPlan(needs, { guaranteedOnly: true }),
       budget: deckBudget(needs),
+      // The same radar the deck view uses, pointed at everything still missing.
+      reprints: upcomingReprints(needs),
     };
   }, [library, db, collection]);
+
+  async function copy() {
+    const text = needsAsText(missing);
+    setCopied(
+      (await copyText(text))
+        ? 'Wantlist kopiert — direkt bei Cardmarket oder in den Chat einfügen.'
+        : text,
+    );
+  }
 
   if (library.length === 0) return null;
 
@@ -51,6 +65,35 @@ export function WantsPanel({ library, db, collection }: Props) {
         {missing.length} Karten · {copies} Kopien · {formatEuro(budget.missingCents)} als Einzelkarten. Eine
         Karte, die in mehreren Decks steckt, zählt nur einmal.
       </p>
+
+      <div className="row" style={{ marginTop: 0 }}>
+        <button onClick={() => void copy()}>Wantlist kopieren</button>
+      </div>
+      {copied && (copied.includes('\n') || !copied.startsWith('Wantlist kopiert') ? (
+        <>
+          <p className="muted" style={{ fontSize: 12.5, margin: '8px 0 4px' }}>
+            Die Zwischenablage ist hier gesperrt — Text markieren und selbst kopieren:
+          </p>
+          <textarea readOnly rows={6} value={copied} onFocus={(e) => e.target.select()} />
+        </>
+      ) : (
+        <div className="notice">{copied}</div>
+      ))}
+
+      {/* Buying a card weeks before it is reprinted is the most expensive mistake
+          this app can prevent, so it goes above the list, not below it. */}
+      {reprints.length > 0 && (
+        <div className="notice">
+          <strong>Warten lohnt sich:</strong> {reprints.length}{' '}
+          {reprints.length === 1 ? 'Karte' : 'Karten'} von deiner Wantlist{' '}
+          {reprints.length === 1 ? 'kommt' : 'kommen'} neu heraus.
+          {reprints.slice(0, 3).map((news) => (
+            <div className="muted" key={news.card.id} style={{ fontSize: 12.5, marginTop: 3 }}>
+              {news.card.name} — {news.printing.set.code} {formatDaysUntil(news.daysUntil)}
+            </div>
+          ))}
+        </div>
+      )}
 
       {plan.steps.length > 0 && (
         <>

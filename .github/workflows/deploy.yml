@@ -32,6 +32,9 @@ jobs:
       - run: npm test
       - name: Fetch card data from YGOPRODeck
         run: npm run fetch-data
+
+      - name: Fetch text recognition engine
+        run: npm run fetch-ocr
         env:
           # The full cardinfo.php dump is a large JSON body to parse.
           NODE_OPTIONS: --max-old-space-size=4096

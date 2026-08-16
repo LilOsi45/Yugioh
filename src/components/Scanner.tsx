@@ -17,6 +17,7 @@ import {
   type Scanner as OcrScanner,
 } from '../lib/scan';
 import { displayName } from '../lib/dataset';
+import { formatEuro } from '../lib/pricing';
 import type { Card, Database } from '../lib/types';
 
 type Status = 'starting' | 'ready' | 'error';
@@ -27,6 +28,18 @@ type Engine = 'loading' | 'ready' | 'failed';
 export interface ScanResult {
   card: Card;
   setCode: string | null;
+  /** Only ever set by hand: the camera cannot tell a Secret Rare from a Common. */
+  rarity?: string | null;
+}
+
+/** The rarities a card was printed at in one set, deduplicated. */
+function raritiesIn(card: Card, setCode: string | null): string[] {
+  if (!setCode) return [];
+  const found = new Set<string>();
+  for (const printing of card.printings) {
+    if (printing.set.code === setCode && printing.rarity) found.add(printing.rarity);
+  }
+  return [...found].sort();
 }
 
 interface Props {
@@ -35,6 +48,8 @@ interface Props {
   onCard: (result: ScanResult) => string;
   /** Take one copy back off. Without it the session list is read-only. */
   onUndo?: (result: ScanResult) => void;
+  /** What the session added, reported once on closing. */
+  onSummary?: (line: string) => void;
   onClose: () => void;
 }
 
@@ -54,6 +69,8 @@ interface Entry {
   undone: boolean;
   /** False when the passcode needed a repaired digit to match. */
   exact: boolean;
+  /** Offered only when the card exists at several rarities in the scanned set. */
+  choices: string[];
 }
 
 /**
@@ -95,7 +112,7 @@ function diagnostics(): string {
   return bits.join(' · ');
 }
 
-export function Scanner({ db, onCard, onUndo, onClose }: Props) {
+export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
   const video = useRef<HTMLVideoElement>(null);
   const preview = useRef<HTMLCanvasElement>(null);
   const stream = useRef<MediaStream | null>(null);
@@ -112,6 +129,7 @@ export function Scanner({ db, onCard, onUndo, onClose }: Props) {
   const [working, setWorking] = useState(false);
   const [torch, setTorch] = useState(false);
   const [typed, setTyped] = useState('');
+  const [sound, setSound] = useState(true);
   /* Proof of life: without these the scanner looks identical whether it is
      searching or dead, which is exactly how the last version failed. */
   const [checked, setChecked] = useState(0);
@@ -136,6 +154,10 @@ export function Scanner({ db, onCard, onUndo, onClose }: Props) {
    */
   const onCardRef = useRef(onCard);
   onCardRef.current = onCard;
+  const soundRef = useRef(sound);
+  soundRef.current = sound;
+  /** One audio context for the whole session; creating one per beep is wasteful. */
+  const audio = useRef<AudioContext | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -228,7 +250,33 @@ export function Scanner({ db, onCard, onUndo, onClose }: Props) {
   // The worker holds a wasm instance; drop it when the scanner closes.
   useEffect(() => () => void ocr.current?.stop(), []);
 
-  /** Confirms a hit without a line of text: a flash, and a buzz where supported. */
+  /**
+   * A short beep, synthesised rather than loaded — no asset, no request, works
+   * offline. Working through a stack, you look at the cards and not at the screen,
+   * so hearing the hit is worth more than seeing it.
+   */
+  function beep() {
+    try {
+      const Ctor = globalThis.AudioContext ?? (globalThis as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!Ctor) return;
+      audio.current ??= new Ctor();
+      const context = audio.current;
+      void context.resume();
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.frequency.value = 880;
+      gain.gain.setValueAtTime(0.0001, context.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.15, context.currentTime + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.12);
+      oscillator.connect(gain).connect(context.destination);
+      oscillator.start();
+      oscillator.stop(context.currentTime + 0.13);
+    } catch {
+      // Audio is a nicety; a browser refusing it changes nothing.
+    }
+  }
+
+  /** Confirms a hit without a line of text: a flash, a buzz, and a beep. */
   function celebrate() {
     setFlash(true);
     globalThis.setTimeout(() => setFlash(false), 220);
@@ -237,16 +285,44 @@ export function Scanner({ db, onCard, onUndo, onClose }: Props) {
     } catch {
       // Vibration is a nicety; a browser refusing it changes nothing.
     }
+    if (soundRef.current) beep();
   }
 
   /** `exact` is false when a digit had to be repaired to reach a known card. */
   function record(result: ScanResult, exact = true) {
-    const message = onCardRef.current(result);
+    // A card printed at one rarity in that set needs no question; the answer is known.
+    const choices = raritiesIn(result.card, result.setCode);
+    const settled: ScanResult = choices.length === 1 ? { ...result, rarity: choices[0]! } : result;
+
+    const message = onCardRef.current(settled);
     setFeedback(exact ? message : `${message} — unsicher gelesen, bitte prüfen`);
     setEntries((list) =>
-      [{ key: Date.now() + Math.random(), result, message, undone: false, exact }, ...list].slice(0, 40),
+      [
+        {
+          key: Date.now() + Math.random(),
+          result: settled,
+          message,
+          undone: false,
+          exact,
+          choices: choices.length > 1 ? choices : [],
+        },
+        ...list,
+      ].slice(0, 40),
     );
     celebrate();
+  }
+
+  /**
+   * Corrects the rarity of an entry after the fact: takes the copy back off under
+   * the old key and puts it on under the new one, so counts stay right.
+   */
+  function chooseRarity(entry: Entry, rarity: string) {
+    onUndo?.(entry.result);
+    const updated: ScanResult = { ...entry.result, rarity };
+    onCardRef.current(updated);
+    setEntries((list) =>
+      list.map((item) => (item.key === entry.key ? { ...item, result: updated } : item)),
+    );
   }
 
   /** Another copy of a card already in hand, without scanning it again. */
@@ -492,7 +568,18 @@ export function Scanner({ db, onCard, onUndo, onClose }: Props) {
     record({ card, setCode: null });
   }
 
-  const counted = entries.filter((entry) => !entry.undone).length;
+  const kept = entries.filter((entry) => !entry.undone);
+  const counted = kept.length;
+
+  /**
+   * Closing reports what the session was worth. A stack session is half an hour of
+   * work; ending it on a blank screen makes it feel like nothing happened.
+   */
+  function finish() {
+    const cents = kept.reduce((sum, entry) => sum + entry.result.card.priceCents, 0);
+    if (counted > 0) onSummary?.(`${counted} Karten erfasst · ${formatEuro(cents)}`);
+    onClose();
+  }
   const engineLine =
     engine === 'loading'
       ? 'Texterkennung wird geladen…'
@@ -549,7 +636,8 @@ export function Scanner({ db, onCard, onUndo, onClose }: Props) {
             </button>
             <button onClick={() => setAuto((value) => !value)}>{auto ? 'Auto-Scan aus' : 'Auto-Scan an'}</button>
             {torchAvailable && <button onClick={toggleTorch}>{torch ? 'Licht aus' : 'Licht an'}</button>}
-            <button onClick={onClose}>Fertig</button>
+            <button onClick={() => setSound((value) => !value)}>{sound ? 'Ton aus' : 'Ton an'}</button>
+            <button onClick={finish}>Fertig</button>
           </div>
 
           {feedback && <div className="notice">{feedback}</div>}
@@ -596,10 +684,27 @@ export function Scanner({ db, onCard, onUndo, onClose }: Props) {
             <div style={{ marginTop: 10 }}>
               {entries.map((entry) => (
                 <div className="line" key={entry.key} style={{ fontSize: 13 }}>
-                  <span className={entry.undone ? 'muted struck' : undefined}>
+                  <span className={entry.undone ? 'muted struck' : undefined} style={{ minWidth: 0, flex: 1 }}>
                     {displayName(entry.result.card)}
                     {entry.result.setCode && <span className="muted"> · {entry.result.setCode}</span>}
+                    {entry.result.rarity && <span className="muted"> · {entry.result.rarity}</span>}
                     {!entry.exact && <span className="muted"> · unsicher</span>}
+                    {/* Only asked when the card exists at several rarities in that
+                        set — otherwise the answer is already known and taken. */}
+                    {!entry.undone && entry.choices.length > 0 && (
+                      <span className="filters" style={{ marginTop: 4 }}>
+                        {entry.choices.map((rarity) => (
+                          <button
+                            key={rarity}
+                            className="chip"
+                            aria-pressed={entry.result.rarity === rarity}
+                            onClick={() => chooseRarity(entry, rarity)}
+                          >
+                            {rarity}
+                          </button>
+                        ))}
+                      </span>
+                    )}
                   </span>
                   {!entry.undone && (
                     <span className="num" style={{ display: 'flex', gap: 8 }}>

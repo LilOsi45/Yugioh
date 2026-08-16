@@ -3,7 +3,9 @@ import {
   addCopies,
   collectionFromDeck,
   collectionTotals,
+  holdingKey,
   mergeCollections,
+  parseHoldingKey,
   parseCollection,
   pruneCollection,
   serializeCollection,
@@ -116,5 +118,37 @@ describe('collection maths', () => {
   it('drops passcodes the card index no longer knows', () => {
     const collection = addCopies(addCopies(new Map(), ASH, 'PHNI'), 999999999, 'PHNI');
     expect([...pruneCollection(collection, db).keys()]).toEqual([ASH]);
+  });
+});
+
+describe('holding keys', () => {
+  it('keeps the plain set code when no rarity is known', () => {
+    expect(holdingKey('PHNI')).toBe('PHNI');
+    expect(holdingKey('PHNI', null)).toBe('PHNI');
+    expect(parseHoldingKey('PHNI')).toEqual({ setCode: 'PHNI', rarity: null });
+  });
+
+  it('carries the rarity alongside the set', () => {
+    expect(holdingKey('PHNI', 'Secret Rare')).toBe('PHNI|Secret Rare');
+    expect(parseHoldingKey('PHNI|Secret Rare')).toEqual({ setCode: 'PHNI', rarity: 'Secret Rare' });
+  });
+
+  it('reads collections saved before rarity existed', () => {
+    // The stored shape never changed, so an old file needs no migration.
+    const old = parseCollection('{"14558127":{"PHNI":2}}');
+    expect(parseHoldingKey([...old.get(ASH)!.bySet.keys()][0]!)).toEqual({ setCode: 'PHNI', rarity: null });
+  });
+
+  it('counts the same card at two rarities as separate piles of one holding', () => {
+    let collection: Collection = addCopies(new Map(), ASH, holdingKey('PHNI', 'Common'), 2);
+    collection = addCopies(collection, ASH, holdingKey('PHNI', 'Secret Rare'));
+    expect(holding(collection, ASH)).toEqual({
+      total: 3,
+      bySet: { 'PHNI|Common': 2, 'PHNI|Secret Rare': 1 },
+    });
+  });
+
+  it('survives a set code that itself contains the separator', () => {
+    expect(parseHoldingKey('A|B|C')).toEqual({ setCode: 'A', rarity: 'B|C' });
   });
 });
