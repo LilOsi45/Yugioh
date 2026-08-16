@@ -547,7 +547,7 @@ export function Scanner({ db, onCard, onUndo, onClose }: Props) {
             <button className="primary" onClick={capture} disabled={status !== 'ready' || engine === 'failed'}>
               {working ? 'Lese…' : 'Jetzt scannen'}
             </button>
-            <button onClick={() => setAuto((value) => !value)}>{auto ? 'Dauerscan aus' : 'Dauerscan an'}</button>
+            <button onClick={() => setAuto((value) => !value)}>{auto ? 'Auto-Scan aus' : 'Auto-Scan an'}</button>
             {torchAvailable && <button onClick={toggleTorch}>{torch ? 'Licht aus' : 'Licht an'}</button>}
             <button onClick={onClose}>Fertig</button>
           </div>
@@ -610,7 +610,7 @@ export function Scanner({ db, onCard, onUndo, onClose }: Props) {
                       </button>
                       {onUndo && (
                         <button className="link" onClick={() => undo(entry)}>
-                          rückgängig
+                          Undo
                         </button>
                       )}
                     </span>

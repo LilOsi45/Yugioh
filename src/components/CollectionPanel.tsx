@@ -161,17 +161,17 @@ export function CollectionPanel({
       {/* The collection lives only in this browser. Say so, and make the fix one tap
           away — hours of scanning are not something to lose to a cleared cache. */}
       <section className="panel">
-        <h2>Sicherung</h2>
+        <h2>Backup</h2>
         <p className="muted" style={{ fontSize: 13, margin: '0 0 10px' }}>
           Deine Sammlung liegt nur in diesem Browser. Wird er geleert oder das Handy gewechselt, ist sie
-          weg. Die Sicherungsdatei enthält {all.length} Karten und {deckCount} Decks.
+          weg. Das Backup enthält {all.length} Karten und {deckCount} Decks.
         </p>
         <div className="row" style={{ marginTop: 0 }}>
           <button onClick={onExport} disabled={all.length === 0 && deckCount === 0}>
-            Sicherung speichern
+            Backup speichern
           </button>
           <button className="link" onClick={onImport}>
-            Sicherung einlesen
+            Backup einlesen
           </button>
         </div>
       </section>

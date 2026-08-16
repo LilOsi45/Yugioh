@@ -86,8 +86,8 @@ describe('groupByCategory', () => {
     expect(groups.map((group) => CATEGORY_LABELS[group.category])).toEqual([
       'Monster',
       'Extra Deck',
-      'Zauber',
-      'Fallen',
+      'Spells',
+      'Traps',
     ]);
     expect(groups.reduce((sum, group) => sum + group.entries.length, 0)).toBe(COLLECTION.length);
   });
