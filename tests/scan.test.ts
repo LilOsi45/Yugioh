@@ -134,14 +134,21 @@ describe('passVariant', () => {
     const seen = new Set<string>();
     for (let tick = 0; tick < AUTO_VARIANTS; tick += 1) {
       const variant = passVariant(tick);
-      seen.add(`${variant.invert}:${variant.bias}:${variant.mode.psm}`);
+      seen.add(`${variant.wide}:${variant.invert}:${variant.bias}:${variant.mode.psm}`);
     }
     expect(seen.size).toBe(AUTO_VARIANTS);
   });
 
-  it('starts with the plain crop, so the common case is tried first', () => {
+  it('starts with the sharp viewfinder crop, so the common case is tried first', () => {
     expect(passVariant(0)).toEqual(PASS_VARIANTS[0]);
     expect(passVariant(0).invert).toBe(false);
+    expect(passVariant(0).wide).toBe(false);
+  });
+
+  it('gets to the whole-frame crop within one cycle, for a card held off centre', () => {
+    const wide = [];
+    for (let tick = 0; tick < AUTO_VARIANTS; tick += 1) if (passVariant(tick).wide) wide.push(tick);
+    expect(wide.length).toBe(AUTO_VARIANTS / 2);
   });
 
   it('leaves the inverted crops to a tap, so an ordinary card is not made to wait', () => {
