@@ -36,7 +36,7 @@ export function WantsPanel({ library, db, collection }: Props) {
   if (missing.length === 0) {
     return (
       <section className="panel">
-        <h2>Einkaufsliste</h2>
+        <h2>Wantlist</h2>
         <p className="empty">Über alle {library.length} Decks fehlt dir nichts mehr.</p>
       </section>
     );
@@ -46,7 +46,7 @@ export function WantsPanel({ library, db, collection }: Props) {
 
   return (
     <section className="panel">
-      <h2>Einkaufsliste</h2>
+      <h2>Wantlist</h2>
       <p className="muted" style={{ fontSize: 13, margin: '0 0 10px' }}>
         {missing.length} Karten · {copies} Kopien · {formatEuro(budget.missingCents)} als Einzelkarten. Eine
         Karte, die in mehreren Decks steckt, zählt nur einmal.

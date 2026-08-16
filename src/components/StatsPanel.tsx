@@ -15,7 +15,7 @@ type View = 'sets' | 'value' | 'spares';
 const LABELS: Record<View, string> = {
   sets: 'Sets',
   value: 'Wert',
-  spares: 'Dubletten',
+  spares: 'Doubles',
 };
 
 /** How many rows each list shows before asking to be expanded. */
@@ -35,7 +35,7 @@ export function StatsPanel({ db, collection }: Props) {
 
   return (
     <section className="panel">
-      <h2>Auswertung</h2>
+      <h2>Stats</h2>
       <p className="muted" style={{ fontSize: 13, margin: '0 0 8px' }}>
         {value.cards} Karten · {value.copies} Kopien · {formatEuro(value.totalCents)}
       </p>

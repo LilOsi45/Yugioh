@@ -18,8 +18,8 @@ export type CardCategory = 'monster' | 'extra' | 'spell' | 'trap';
 export const CATEGORY_LABELS: Record<CardCategory, string> = {
   monster: 'Monster',
   extra: 'Extra Deck',
-  spell: 'Zauber',
-  trap: 'Fallen',
+  spell: 'Spells',
+  trap: 'Traps',
 };
 
 /** Fixed display order, so the collection always reads the same way. */

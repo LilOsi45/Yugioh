@@ -63,11 +63,11 @@ export function fromBackup(text: string): Backup {
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new BackupError('Das ist keine gültige Sicherungsdatei.');
+    throw new BackupError('Das ist kein gültiges Backup.');
   }
 
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new BackupError('Das ist keine gültige Sicherungsdatei.');
+    throw new BackupError('Das ist kein gültiges Backup.');
   }
 
   const file = parsed as Partial<BackupFile>;

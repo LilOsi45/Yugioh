@@ -145,7 +145,7 @@ export function App() {
         const replace =
           collection.size === 0 ||
           globalThis.confirm(
-            'Sicherung einspielen:\n\nOK = deine jetzige Sammlung ersetzen\nAbbrechen = dazuzählen',
+            'Backup einspielen:\n\nOK = deine jetzige Sammlung ersetzen\nAbbrechen = dazuzählen',
           );
         updateCollection(
           pruneCollection(replace ? backup.collection : mergeCollections(collection, backup.collection), db),
@@ -154,7 +154,7 @@ export function App() {
           updateLibrary(replace ? backup.library : [...backup.library, ...library]);
         }
         setNotice(
-          `Sicherung eingespielt: ${backup.collection.size} Karten, ${backup.library.length} Decks.`,
+          `Backup eingespielt: ${backup.collection.size} Karten, ${backup.library.length} Decks.`,
         );
       } catch (error) {
         setNotice(error instanceof Error ? error.message : 'Die Datei konnte nicht gelesen werden.');
@@ -167,7 +167,7 @@ export function App() {
 
   function exportBackup() {
     downloadBackup(toBackup(collection, library), backupFilename());
-    setNotice('Sicherung heruntergeladen. Leg sie irgendwo ab, wo sie dein Handy nicht wegräumt.');
+    setNotice('Backup heruntergeladen. Leg sie irgendwo ab, wo sie dein Handy nicht wegräumt.');
   }
 
   const analysis = useMemo(() => {
