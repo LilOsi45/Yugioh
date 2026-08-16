@@ -2,36 +2,45 @@ import { useEffect, useRef, useState } from 'react';
 import {
   captureFrame,
   createScanner,
+  cropPixels,
   cropRegion,
   cropVideoRegion,
   extractSetCode,
-  lineBand,
   matchPasscode,
   NO_MEMORY,
   PASS_VARIANTS,
   PASSCODE_REGION,
   passVariant,
+  pointInFrame,
   samplePatch,
   samplePixels,
   SET_CODE_MODE,
   SET_CODE_REGION,
   SET_CODE_SPARSE_MODE,
   stepScan,
+  turnForMisses,
+  TURNS,
   wordCentre,
   type Crop,
   type Frame,
+  type LineBox,
   type PassVariant,
+  type Reading,
   type Scanner as OcrScanner,
+  type Turn,
   type WordBox,
 } from '../lib/scan';
 import {
   ART_REGION,
   boundingBoxOnCard,
-  cardFrameFromAnchors,
+  cardFrameFromLine,
   NAME_REGION,
   RARITY_REGIONS,
+  refineScale,
   regionsVisible,
+  SET_CODE_BAND,
   TEXTBOX_REGION,
+  type CardFrame,
 } from '../lib/cardGeometry';
 import { combineLooks, decideRarity, measureLook, type Look, type RarityDecision } from '../lib/rarity';
 import { displayName } from '../lib/dataset';
@@ -48,6 +57,25 @@ export interface ScanResult {
   card: Card;
   setCode: string | null;
   rarity?: string | null;
+}
+
+/**
+ * The sets a card was printed in, newest first — what to offer when the set code on
+ * the card could not be read. Most cards have a handful, so one tap fills the gap
+ * that would otherwise land in the collection as "no set" and have to be dug out
+ * again later.
+ */
+const SET_CHOICES = 6;
+
+function setsFor(card: Card): string[] {
+  const byCode = new Map<string, string>();
+  for (const printing of card.printings) {
+    if (!byCode.has(printing.set.code)) byCode.set(printing.set.code, printing.set.tcgDate ?? '');
+  }
+  return [...byCode.entries()]
+    .sort((a, b) => b[1].localeCompare(a[1]) || a[0].localeCompare(b[0]))
+    .slice(0, SET_CHOICES)
+    .map(([code]) => code);
 }
 
 /** The rarities a card was printed at in one set, deduplicated. */
@@ -97,6 +125,8 @@ interface Entry {
   exact: boolean;
   /** Offered only when the card exists at several rarities in the scanned set. */
   choices: string[];
+  /** Offered when the set code could not be read: the sets this card was printed in. */
+  sets: string[];
   /** True when the rarity in `result` came from the camera rather than a tap. */
   detected: boolean;
 }
@@ -115,6 +145,11 @@ function passcodeWord(words: WordBox[]): WordBox | null {
     }
   }
   return best;
+}
+
+/** The line a word belongs to, which is what carries the baseline and row height. */
+function lineOf(reading: Reading, word: WordBox): LineBox | null {
+  return reading.lines.find((line) => line.words.includes(word)) ?? null;
 }
 
 /** The word the set code was read from, so its position on the card is known. */
@@ -184,6 +219,8 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
   const [typed, setTyped] = useState('');
   const [sound, setSound] = useState(true);
   const [detectRarity, setDetectRarity] = useState(true);
+  /** The quarter turn the cards are lying at, learned from the first card that read. */
+  const [turnSeen, setTurnSeen] = useState<Turn>(0);
   /** Held for the whole session once chosen: a rarity collection is all one rarity. */
   const [sessionRarity, setSessionRarity] = useState<string | null>(null);
   /* Proof of life: without these the scanner looks identical whether it is
@@ -214,6 +251,9 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
   soundRef.current = sound;
   const detectRarityRef = useRef(detectRarity);
   detectRarityRef.current = detectRarity;
+  /** Which way the cards lie, and how long nothing has been found at that turn. */
+  const preferredTurn = useRef<Turn>(0);
+  const misses = useRef(0);
   const sessionRarityRef = useRef(sessionRarity);
   sessionRarityRef.current = sessionRarity;
   /** One audio context for the whole session; creating one per beep is wasteful. */
@@ -382,6 +422,7 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
           undone: false,
           exact,
           choices: choices.length > 1 ? ordered : [],
+          sets: settled.setCode ? [] : setsFor(settled.card),
           detected,
         },
         ...list,
@@ -400,6 +441,29 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     onCardRef.current(updated);
     setEntries((list) =>
       list.map((item) => (item.key === entry.key ? { ...item, result: updated, detected: false } : item)),
+    );
+  }
+
+  /**
+   * Fills in the set for an entry whose code the camera could not read. Rebooks the
+   * copy under the new key, and settles the rarity straight away when that set only
+   * ever printed the card one way.
+   */
+  function chooseSet(entry: Entry, setCode: string) {
+    onUndo?.(entry.result);
+    const choices = raritiesIn(entry.result.card, setCode);
+    const updated: ScanResult = {
+      ...entry.result,
+      setCode,
+      rarity: choices.length === 1 ? choices[0]! : entry.result.rarity ?? null,
+    };
+    onCardRef.current(updated);
+    setEntries((list) =>
+      list.map((item) =>
+        item.key === entry.key
+          ? { ...item, result: updated, sets: [], choices: choices.length > 1 ? choices : [], detected: false }
+          : item,
+      ),
     );
   }
 
@@ -442,21 +506,29 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     guideCrop: Crop,
     card: Card,
     scanner: OcrScanner,
-    line: { y: number; height: number } | null,
+    rough: CardFrame | null,
+    turn: Turn,
   ): Promise<{ code: string; at: { x: number; y: number } | null } | null> {
-    const wide = cropVideoRegion(frame, SET_CODE_REGION);
+    const wide = cropVideoRegion(frame, SET_CODE_REGION, { turn });
     /*
-     * The strip around the passcode's own line comes first when it is known. It holds
-     * the set code and almost nothing else — where the wide band also holds the lower
-     * half of the artwork, which on a foil card thresholds into a field of speckle
-     * that the code disappears into.
+     * The card's own lower band comes first when the geometry is known. It covers both
+     * places a card can print its set code — under the artwork, or on the bottom line
+     * beside the passcode — while leaving the artwork out, and on a foil card that is
+     * the difference between reading the code and not: rainbow foil thresholds into a
+     * field of speckle that swallows it.
      */
-    const strip = line
-      ? cropVideoRegion(frame, lineBand(frame.height, line.y, line.height), { scale: 3 })
+    const band = rough
+      ? (() => {
+          const box = boundingBoxOnCard(rough, SET_CODE_BAND);
+          return cropPixels(frame, { sx: box.x, sy: box.y, sw: box.width, sh: box.height }, {
+            scale: 3,
+            turn,
+          });
+        })()
       : null;
     const readings: string[] = [];
     for (const [crop, mode] of [
-      ...(strip ? ([[strip, SET_CODE_MODE], [strip, SET_CODE_SPARSE_MODE]] as const) : []),
+      ...(band ? ([[band, SET_CODE_MODE], [band, SET_CODE_SPARSE_MODE]] as const) : []),
       [wide, SET_CODE_MODE],
       [wide, SET_CODE_SPARSE_MODE],
       [guideCrop, SET_CODE_MODE],
@@ -494,15 +566,10 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
   async function measureRarity(
     source: HTMLVideoElement,
     frame: Frame,
-    passcodeAt: { x: number; y: number } | null,
-    setCodeAt: { x: number; y: number } | null,
+    card: CardFrame | null,
     candidates: string[],
   ): Promise<RarityDecision | null> {
-    if (!detectRarityRef.current || candidates.length < 2) return null;
-    if (!passcodeAt || !setCodeAt) return null;
-
-    const card = cardFrameFromAnchors(passcodeAt, setCodeAt);
-    if (!card) return null;
+    if (!detectRarityRef.current || candidates.length < 2 || !card) return null;
     if (!regionsVisible(card, frame.width, frame.height, RARITY_REGIONS)) {
       setSetReading((line) => (line ? `${line} · Rarity: Karte nicht ganz im Bild` : null));
       return null;
@@ -546,7 +613,18 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     const scanner = ocr.current;
     if (!source || !scanner) return;
 
-    const variants: PassVariant[] = manual ? PASS_VARIANTS : [passVariant(tick.current)];
+    /*
+     * A tap works through every crop and mode at the turn that last worked, then takes
+     * one look at each other turn. The continuous loop takes one combination per tick
+     * and lets `turnForMisses` decide when to start looking at other turns.
+     */
+    const held = preferredTurn.current;
+    const attempts: { variant: PassVariant; turn: Turn }[] = manual
+      ? [
+          ...PASS_VARIANTS.map((variant) => ({ variant, turn: held })),
+          ...TURNS.filter((turn) => turn !== held).map((turn) => ({ variant: PASS_VARIANTS[0]!, turn })),
+        ]
+      : [{ variant: passVariant(tick.current), turn: turnForMisses(misses.current, held) }];
     tick.current += 1;
 
     /*
@@ -560,11 +638,11 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
 
     // Each distinct crop is built once and reused by every variant that wants it.
     const crops = new Map<string, Crop>();
-    function cropFor(variant: PassVariant): Crop {
-      const key = `${variant.wide}:${variant.invert}:${variant.bias}`;
+    function cropFor(variant: PassVariant, turn: Turn): Crop {
+      const key = `${variant.wide}:${variant.invert}:${variant.bias}:${turn}`;
       const existing = crops.get(key);
       if (existing) return existing;
-      const options = { invert: variant.invert, bias: variant.bias };
+      const options = { invert: variant.invert, bias: variant.bias, turn };
       const crop = variant.wide
         ? cropVideoRegion(frame, SET_CODE_REGION, options)
         : cropRegion(frame, PASSCODE_REGION, options);
@@ -572,14 +650,14 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
       return crop;
     }
 
-    showPreview(cropFor(variants[0]!).canvas);
+    showPreview(cropFor(attempts[0]!.variant, attempts[0]!.turn).canvas);
 
     const readings: string[] = [];
-    for (const [index, variant] of variants.entries()) {
-      const crop = cropFor(variant);
+    for (const [index, { variant, turn }] of attempts.entries()) {
+      const crop = cropFor(variant, turn);
       if (manual) {
         showPreview(crop.canvas);
-        setReading(`Versuch ${index + 1} von ${variants.length}…`);
+        setReading(`Versuch ${index + 1} von ${attempts.length}…`);
       }
       const reading = await scanner.read(crop.canvas, variant.mode, detectRarityRef.current);
       const cleaned = reading.text.replace(/\s+/g, '');
@@ -598,24 +676,48 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
         return;
       }
 
+      // This turn works for this pile; try it first from now on.
+      preferredTurn.current = turn;
+      misses.current = 0;
+      setTurnSeen(turn);
+
+      /*
+       * Where the passcode was read, and at what angle, puts the whole card on the
+       * map: its line's baseline is the card's own horizontal, and the row height is
+       * roughly its size. That is what the set code is then looked for through.
+       */
       const word = passcodeWord(reading.words);
       const passcodeAt = word ? wordCentre(word, crop) : null;
-      const line =
-        word && passcodeAt ? { y: passcodeAt.y, height: (word.y1 - word.y0) / crop.scale } : null;
+      const line = word ? lineOf(reading, word) : null;
+      let geometry: CardFrame | null = null;
+      if (word && passcodeAt && line) {
+        const from = pointInFrame({ x: line.baseline.x0, y: line.baseline.y0 }, crop);
+        const to = pointInFrame({ x: line.baseline.x1, y: line.baseline.y1 }, crop);
+        geometry = cardFrameFromLine(
+          passcodeAt,
+          { x0: from.x, y0: from.y, x1: to.x, y1: to.y },
+          line.rowHeight / crop.scale,
+        );
+      }
 
       // Only now is a second pass worth its cost: we know which card, so the set
       // code can be checked against that card's printings.
       let found: { code: string; at: { x: number; y: number } | null } | null = null;
       try {
-        found = await readSetCode(frame, crop, card, scanner, line);
+        found = await readSetCode(frame, crop, card, scanner, geometry, turn);
       } catch {
         // A failed set read is a missing detail, not a failed scan.
       }
       const setCode = found?.code ?? null;
 
+      // The set code across the card is a far longer lever than a row height, so it
+      // is what the measurement's aim finally rests on.
+      const sharp =
+        geometry && passcodeAt && found?.at ? refineScale(geometry, passcodeAt, found.at) : null;
+
       let decision: RarityDecision | null = null;
       try {
-        decision = await measureRarity(source, frame, passcodeAt, found?.at ?? null, raritiesIn(card, setCode));
+        decision = await measureRarity(source, frame, sharp, raritiesIn(card, setCode));
       } catch {
         // Same rule as the set code: a detail that failed, not a failed scan.
       }
@@ -624,6 +726,8 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
       record({ card, setCode }, match.exact, decision);
       return;
     }
+
+    misses.current += 1;
 
     // Nothing in view: that is what tells the scanner the next card is a new one.
     memory.current = stepScan(memory.current, null, Date.now()).memory;
@@ -784,8 +888,12 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
             <video ref={video} playsInline muted autoPlay />
             {/* The whole card, not just its bottom: the set code sits in the opposite
                 corner from the passcode, and the rarity is read off the name and the
-                artwork. Everything the scanner needs is inside this outline. */}
-            <div className="scanguide" />
+                artwork. Everything the scanner needs is inside this outline — and it
+                lies the way the cards do, so it is an instruction and not a puzzle. */}
+            <div
+              className="scanguide"
+              style={turnSeen === 90 || turnSeen === 270 ? { aspectRatio: '86 / 59' } : undefined}
+            />
           </div>
 
           <p className="muted" style={{ fontSize: 12.5, margin: '8px 0 0' }}>
@@ -806,6 +914,24 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
             </button>
             <button onClick={finish}>Fertig</button>
           </div>
+
+          {/* Quarter-turned cards are unreadable to the engine until the crop is
+              turned with them, so which way they lie is worth stating. */}
+          {turnSeen !== 0 && (
+            <div className="notice" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span style={{ flex: 1 }}>Karten liegen quer ({turnSeen}°) — wird mitgedreht gelesen</span>
+              <button
+                className="link"
+                onClick={() => {
+                  preferredTurn.current = 0;
+                  misses.current = 0;
+                  setTurnSeen(0);
+                }}
+              >
+                zurücksetzen
+              </button>
+            </div>
+          )}
 
           {/* A rarity collection is one rarity from front to back; saying so once
               saves the rest of the taps. */}
@@ -868,6 +994,18 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
                     {entry.result.rarity && <span className="muted"> · {entry.result.rarity}</span>}
                     {entry.detected && <span className="muted"> · erkannt</span>}
                     {!entry.exact && <span className="muted"> · unsicher</span>}
+                    {/* No set code read: the card's own sets are a short list, and one
+                        tap beats hunting for the card in the collection later. */}
+                    {!entry.undone && entry.sets.length > 0 && (
+                      <span className="filters" style={{ marginTop: 4 }}>
+                        <span className="muted" style={{ fontSize: 12 }}>Set?</span>
+                        {entry.sets.map((code) => (
+                          <button key={code} className="chip" onClick={() => chooseSet(entry, code)}>
+                            {code}
+                          </button>
+                        ))}
+                      </span>
+                    )}
                     {/* Only asked when the card exists at several rarities in that
                         set, and then best guess first. */}
                     {!entry.undone && entry.choices.length > 0 && (
