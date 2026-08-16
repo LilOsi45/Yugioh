@@ -564,6 +564,28 @@ export function coverSourceRect(
 export const SET_CODE_REGION: Rect = { x: 0, y: 0.45, width: 1, height: 0.55 };
 
 /**
+ * That same band, for a card that is not standing upright.
+ *
+ * Searching the whole frame instead is the obvious answer and a bad one: it drags the
+ * artwork in, and a foil card's artwork thresholds into a field of speckle that a
+ * passcode is never found in — measured, a turned foil card was not read at all that
+ * way. The band does not have to be given up, only turned with the card. Which half
+ * of the frame ends up at the bottom of a turned crop follows from how it is drawn.
+ */
+export function passcodeBand(turn: Turn): Rect {
+  switch (turn) {
+    case 90:
+      return { x: 0.45, y: 0, width: 0.55, height: 1 };
+    case 180:
+      return { x: 0, y: 0, width: 1, height: 0.55 };
+    case 270:
+      return { x: 0, y: 0, width: 0.55, height: 1 };
+    default:
+      return SET_CODE_REGION;
+  }
+}
+
+/**
  * Crops a rectangle given in fractions of the *video frame*, ignoring how much of
  * that frame the element happens to show.
  */

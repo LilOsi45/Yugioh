@@ -10,6 +10,7 @@ import {
   NO_MEMORY,
   PASS_VARIANTS,
   PASSCODE_REGION,
+  passcodeBand,
   passVariant,
   pointInFrame,
   samplePatch,
@@ -116,8 +117,6 @@ const PREVIEW_WIDTH = 320;
  */
 const RARITY_SAMPLES = 3;
 
-/** Everything the camera sees — what a turned card has to be looked for in. */
-const WHOLE_FRAME = { x: 0, y: 0, width: 1, height: 1 };
 const RARITY_GAP_MS = 70;
 
 interface Entry {
@@ -654,13 +653,13 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
       /*
        * Both search regions assume a card standing upright: the lower band of the
        * frame, and the viewfinder box. Turn the card a quarter and the passcode moves
-       * to the side of the picture, outside either of them — so as soon as the card is
-       * not upright, the whole frame is the search region. It costs more pixels and it
-       * is the only thing that can be right when the position is unknown.
+       * to the side of the picture, outside either of them — so the band turns with
+       * the card. Taking the whole frame instead would be simpler and worse: it drags
+       * in the artwork, and a foil card's artwork is exactly where a reading drowns.
        */
       const crop =
         turn !== 0
-          ? cropVideoRegion(frame, WHOLE_FRAME, { ...options, scale: 1.5 })
+          ? cropVideoRegion(frame, passcodeBand(turn), { ...options, scale: variant.wide ? 2 : 3 })
           : variant.wide
             ? cropVideoRegion(frame, SET_CODE_REGION, options)
             : cropRegion(frame, PASSCODE_REGION, options);
