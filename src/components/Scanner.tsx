@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   createScanner,
   cropRegion,
+  cropVideoRegion,
   extractSetCode,
   matchPasscode,
   NO_MEMORY,
@@ -9,6 +10,8 @@ import {
   PASSCODE_REGION,
   passVariant,
   SET_CODE_MODE,
+  SET_CODE_REGION,
+  SET_CODE_SPARSE_MODE,
   stepScan,
   type PassVariant,
   type Scanner as OcrScanner,
@@ -113,6 +116,7 @@ export function Scanner({ db, onCard, onUndo, onClose }: Props) {
      searching or dead, which is exactly how the last version failed. */
   const [checked, setChecked] = useState(0);
   const [reading, setReading] = useState<string | null>(null);
+  const [setReadingText, setSetReading] = useState<string | null>(null);
 
   // Refs, not state: the scan loop reads these between renders.
   const busy = useRef(false);
@@ -267,6 +271,42 @@ export function Scanner({ db, onCard, onUndo, onClose }: Props) {
   }
 
   /**
+   * Hunts for the set code once the card is known.
+   *
+   * Looks at the whole lower half of the camera frame first, not the viewfinder
+   * crop: the set code sits on the opposite corner from the passcode and is
+   * routinely outside the visible box. The viewfinder crop stays as a fallback,
+   * since it is sharper when the code does happen to be in it.
+   */
+  async function readSetCode(
+    source: HTMLVideoElement,
+    guideCrop: HTMLCanvasElement,
+    card: Card,
+    scanner: OcrScanner,
+  ): Promise<string | null> {
+    const wide = cropVideoRegion(source, SET_CODE_REGION);
+    const readings: string[] = [];
+    for (const [canvas, mode] of [
+      [wide, SET_CODE_MODE],
+      [wide, SET_CODE_SPARSE_MODE],
+      [guideCrop, SET_CODE_MODE],
+    ] as const) {
+      const text = await scanner.read(canvas, mode);
+      const cleaned = text.replace(/\s+/g, ' ').trim();
+      if (cleaned) readings.push(cleaned);
+      const code = extractSetCode(text, card);
+      if (code) {
+        setSetReading(`Set gelesen: ${code}`);
+        return code;
+      }
+    }
+    // Nothing usable: show the raw text, so a failure can be diagnosed from the
+    // screen instead of guessed at.
+    setSetReading(readings.length > 0 ? `Set nicht erkannt in: ${readings.join(' / ').slice(0, 60)}` : null);
+    return null;
+  }
+
+  /**
    * One recognition attempt.
    *
    * A tap tries every crop and mode at once, the way it always did. The continuous
@@ -322,7 +362,7 @@ export function Scanner({ db, onCard, onUndo, onClose }: Props) {
       // code can be checked against that card's printings.
       let setCode: string | null = null;
       try {
-        setCode = extractSetCode(await scanner.read(canvas, SET_CODE_MODE), card);
+        setCode = await readSetCode(source, canvas, card, scanner);
       } catch {
         // A failed set read is a missing detail, not a failed scan.
       }
@@ -515,6 +555,11 @@ export function Scanner({ db, onCard, onUndo, onClose }: Props) {
           {reading && (
             <p className="muted scanreading" title={reading}>
               {reading}
+            </p>
+          )}
+          {setReadingText && (
+            <p className="muted scanreading" title={setReadingText}>
+              {setReadingText}
             </p>
           )}
           <canvas ref={preview} className="scanpreview" />
