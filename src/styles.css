@@ -821,3 +821,17 @@ footer.app {
   background: var(--bg-sunken);
   flex: 0 0 auto;
 }
+
+/*
+ * The card the scanner found, as opposed to the outline asking for one.
+ *
+ * Worth its few lines: every scanning failure reported from the device was invisible
+ * until a reading came back as rules text, and the reason then had to be guessed at.
+ * With this, whether the scanner has the card is something to see rather than deduce.
+ */
+.scanfound {
+  position: absolute;
+  border: 2px solid var(--good);
+  border-radius: 6px;
+  pointer-events: none;
+}

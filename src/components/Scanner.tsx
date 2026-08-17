@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import {
   captureFrame,
   createScanner,
+  frameGrey,
+  frameRectOnElement,
   cropGuide,
   cropPixels,
   cropVideoRegion,
@@ -37,6 +39,7 @@ import {
   type Turn,
   type WordBox,
 } from '../lib/scan';
+import { detectCard, frameFromDetection } from '../lib/cardDetect';
 import {
   ART_REGION,
   boundingBoxOnCard,
@@ -257,6 +260,13 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
   const [checked, setChecked] = useState(0);
   const [reading, setReading] = useState<string | null>(null);
   const [setReadingText, setSetReading] = useState<string | null>(null);
+  /*
+   * Where the card was found, in fractions of the picture, so the viewfinder can show
+   * it. This is the one piece of feedback that says whether the scanner is looking at
+   * the card at all — every failure so far was invisible until a reading came back as
+   * rules text, and by then the reason was already guessed at rather than seen.
+   */
+  const [found, setFound] = useState<Rect | null>(null);
 
   // Refs, not state: the scan loop reads these between renders.
   const busy = useRef(false);
@@ -553,6 +563,17 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     // that finds the number, and it needs no geometry to have been guessed right.
     const framed = cropGuide(frame, SET_CODE_LINE, { scale: 4 });
     /*
+     * Best of all: the same place on the card that was actually found in the picture.
+     * `Set-Zeile: —` came back from the device again and again because there was no
+     * card frame to address, only a hope about where the user was holding it.
+     */
+    const onCard = rough
+      ? (() => {
+          const box = boundingBoxOnCard(rough, SET_CODE_LINE);
+          return cropPixels(frame, { sx: box.x, sy: box.y, sw: box.width, sh: box.height }, { scale: 4, turn });
+        })()
+      : null;
+    /*
      * The card's own lower band comes first when the geometry is known. It covers both
      * places a card can print its set code — under the artwork, or on the bottom line
      * beside the passcode — while leaving the artwork out, and on a foil card that is
@@ -570,6 +591,12 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
       : [];
     const readings: string[] = [];
     for (const [crop, mode] of [
+      ...(onCard
+        ? ([
+            [onCard, SET_CODE_MODE],
+            [onCard, SET_CODE_SPARSE_MODE],
+          ] as const)
+        : []),
       [framed, SET_CODE_MODE] as const,
       [framed, SET_CODE_SPARSE_MODE] as const,
       ...bands.flatMap((band: Crop) => [[band, SET_CODE_MODE] as const, [band, SET_CODE_SPARSE_MODE] as const]),
@@ -667,16 +694,9 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
      * and lets `turnForMisses` decide when to start looking at other turns.
      */
     const held = turnRef.current;
-    const attempts: { variant: PassVariant; turn: Turn }[] = manual
-      ? [
-          // The plain variants at the turn that works, then one look at each other
-          // turn. The inverted ones are for an unusual kind of printing and used to
-          // push a tap to nineteen recognitions, which on a phone is not a button
-          // press any more — they come last, and only if nothing else lands.
-          ...PASS_VARIANTS.filter((variant) => !variant.invert).map((variant) => ({ variant, turn: held })),
-          ...PASS_VARIANTS.filter((variant) => variant.invert).map((variant) => ({ variant, turn: held })),
-        ]
-      : [{ variant: passVariant(tick.current), turn: held }];
+    const plain = PASS_VARIANTS.filter((variant) => !variant.invert);
+    const inverted = PASS_VARIANTS.filter((variant) => variant.invert);
+    const step = tick.current;
     tick.current += 1;
 
     /*
@@ -688,32 +708,92 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
      */
     const frame = captureFrame(source);
 
+    /*
+     * Find the card before reading anything out of it.
+     *
+     * Every crop until now was addressed to a rectangle the app hoped the card was in,
+     * and every failure reported from the device was that hope being wrong: the strip
+     * cut for the eight digit number landed one line up and came back as
+     * `14747213920821000551234370` — rules text read as digits. A card on a table is a
+     * rectangle with four hard edges, so the picture can simply be asked where it is.
+     * Once it answers, the number, the set code, the name and the artwork are all at
+     * fixed places *on the card*, and how the phone was held stops mattering.
+     */
+    const grey = frameGrey(frame);
+    const spotted = detectCard(grey);
+    /*
+     * A card lying on its side leaves two things open that its outline cannot settle:
+     * which end is the top, and which way the text runs. Both are cheap to try, so
+     * they are tried rather than guessed.
+     */
+    const candidates: { card: CardFrame; turn: Turn }[] = spotted
+      ? spotted.sideways
+        ? ([90, 270] as Turn[]).flatMap((turn) =>
+            [true, false].map((right) => ({
+              card: frameFromDetection(spotted, grey.width, grey.height, frame.width, frame.height, right),
+              turn,
+            })),
+          )
+        : [
+            {
+              card: frameFromDetection(spotted, grey.width, grey.height, frame.width, frame.height),
+              turn: 0 as Turn,
+            },
+          ]
+      : [];
+    setFound(
+      spotted
+        ? frameRectOnElement(frame.width, frame.height, frame.elementWidth, frame.elementHeight, {
+            x: spotted.x / grey.width,
+            y: spotted.y / grey.height,
+            width: spotted.width / grey.width,
+            height: spotted.height / grey.height,
+          })
+        : null,
+    );
+
+    /*
+     * What to try, in the order that pays off soonest. A found card comes first and
+     * usually ends it there; the old blind bands stay behind it, for the picture where
+     * the outline could not be made out at all.
+     */
+    type Attempt = { variant: PassVariant; turn: Turn; card: CardFrame | null };
+    const attempts: Attempt[] = manual
+      ? [
+          ...candidates.flatMap(({ card, turn }) => plain.map((variant) => ({ variant, turn, card }))),
+          ...plain.map((variant) => ({ variant, turn: held, card: null })),
+          // Inverted printings are rare and used to push a tap to nineteen
+          // recognitions, which on a phone is not a button press any more.
+          ...inverted.map((variant) => ({ variant, turn: held, card: null })),
+        ]
+      : candidates.length > 0
+        ? [
+            {
+              variant: passVariant(step),
+              turn: candidates[step % candidates.length]!.turn,
+              card: candidates[step % candidates.length]!.card,
+            },
+          ]
+        : [{ variant: passVariant(step), turn: held, card: null }];
+
     // Each distinct crop is built once and reused by every variant that wants it.
     const crops = new Map<string, Crop>();
-    function cropFor(variant: PassVariant, turn: Turn): Crop {
-      const key = `${variant.wide}:${variant.invert}:${variant.threshold.window}:${variant.threshold.bias}:${turn}`;
+    function cropFor(variant: PassVariant, turn: Turn, card: CardFrame | null): Crop {
+      const key = `${variant.wide}:${variant.invert}:${variant.threshold.window}:${variant.threshold.bias}:${turn}:${card ? `${card.origin.x},${card.origin.y},${card.right.x},${card.down.x}` : 'guide'}`;
       const existing = crops.get(key);
       if (existing) return existing;
       const options = { invert: variant.invert, threshold: variant.threshold, turn };
+      if (card) {
+        // The number's line on the card the picture actually contains.
+        const box = boundingBoxOnCard(card, PASSCODE_LINE);
+        const crop = cropPixels(frame, { sx: box.x, sy: box.y, sw: box.width, sh: box.height }, { ...options, scale: 4 });
+        crops.set(key, crop);
+        return crop;
+      }
       /*
-       * The band turns with the card: a quarter turn moves the passcode to the side
-       * of the picture, outside a band fixed to the bottom. Two widths, because the
-       * narrow one assumes the card's bottom edge is near the edge of the frame and
-       * that is only true if the card is held right down — so the wide one goes first
-       * and the narrow one follows as the sharper second look.
-       */
-      /*
-       * Two bands rather than a band and the viewfinder box. The box was a sensible
-       * crop while it marked where to put the passcode; now that the outline asks for
-       * the whole card, what it frames is mostly artwork. A narrow strip along the
-       * card's bottom edge and a wider fallback do the same job without that.
-       */
-      /*
-       * The outline first, the picture second. Cutting the card's own bottom edge out
-       * of the outline gives the number line and nothing else — where a band of the
-       * picture either lands below the card or brings the whole effect text with it.
-       * A real reading came back as `328154153381140`: fifteen digits of effect text,
-       * with the number nowhere in them.
+       * No card made out: back to guessing where it might be. The outline is the
+       * better guess of the two, because it is at least an agreement with the user;
+       * the band of the picture is the last resort.
        */
       const crop = variant.wide
         ? cropVideoRegion(frame, passcodeBand(turn, WIDE_BAND), { ...options, scale: 2 })
@@ -722,11 +802,11 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
       return crop;
     }
 
-    showPreview(cropFor(attempts[0]!.variant, attempts[0]!.turn).canvas);
+    showPreview(cropFor(attempts[0]!.variant, attempts[0]!.turn, attempts[0]!.card).canvas);
 
     const readings: string[] = [];
-    for (const [index, { variant, turn }] of attempts.entries()) {
-      const crop = cropFor(variant, turn);
+    for (const [index, { variant, turn, card: onCard }] of attempts.entries()) {
+      const crop = cropFor(variant, turn, onCard);
       if (manual) {
         showPreview(crop.canvas);
         setReading(`Versuch ${index + 1} von ${attempts.length}…`);
@@ -757,17 +837,19 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
       const passcodeAt = word ? wordCentre(word, crop) : null;
       const line = word ? lineOf(reading, word) : null;
       /*
-       * The outline is the card, so it is the card frame — no row height to estimate
-       * and no second anchor to find. The estimate below stays for a card that was
-       * read from the picture instead.
+       * The card that was *found* is the card frame — nothing to estimate, and it is
+       * the frame the number was just read through, so it is known to be right. The
+       * outline comes next as an agreement with the user, and the estimate from the
+       * row height last, for a reading that came out of a blind band.
        */
       const box = guideSourceRect(frame);
       let geometry: CardFrame | null =
-        box.sw > 0 && box.sh > 0
+        onCard ??
+        (box.sw > 0 && box.sh > 0
           ? { origin: { x: box.sx, y: box.sy }, right: { x: box.sw, y: 0 }, down: { x: 0, y: box.sh } }
-          : null;
-      if (!variant.wide && geometry) {
-        // Read through the outline: trust it and skip the estimate entirely.
+          : null);
+      if (onCard || !variant.wide) {
+        // Found, or framed by the user: either way there is nothing left to guess.
       } else if (word && passcodeAt && line) {
         const from = pointInFrame({ x: line.baseline.x0, y: line.baseline.y0 }, crop);
         const to = pointInFrame({ x: line.baseline.x1, y: line.baseline.y1 }, crop);
@@ -790,7 +872,7 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
 
       // The set code across the card is a far longer lever than a row height, so it
       // is what the measurement's aim finally rests on.
-      const sharp = !variant.wide
+      const sharp = onCard || !variant.wide
         ? geometry
         : geometry && passcodeAt && found?.at
           ? refineScale(geometry, passcodeAt, found.at)
@@ -1120,12 +1202,26 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
                 artwork. Everything the scanner needs is inside this outline — and it
                 lies the way the cards do, so it is an instruction and not a puzzle. */}
             <div className="scanguide" style={outline} />
+            {/* What the scanner actually found. When this sits on the card, the number,
+                the set code and the rarity are all being cut from the right places; when
+                it is missing, that is visible before a reading comes back as rules text. */}
+            {found ? (
+              <div
+                className="scanfound"
+                style={{
+                  left: `${found.x * 100}%`,
+                  top: `${found.y * 100}%`,
+                  width: `${found.width * 100}%`,
+                  height: `${found.height * 100}%`,
+                }}
+              />
+            ) : null}
           </div>
 
           <p className="muted" style={{ fontSize: 12.5, margin: '8px 0 0' }}>
             {auto
-              ? 'Ganze Karte in den Umriss legen — nur so sind Set-Code und Rarity überhaupt im Bild. „Foto aufnehmen" ist noch schärfer, der Live-Scan läuft nebenher weiter.'
-              : 'Ganze Karte in den Umriss legen, dann tippen. Set-Code und Rarity werden mitgelesen. „Foto aufnehmen" ist der schärfste Weg.'}
+              ? 'Ganze Karte ins Bild, ruhig halten. Der grüne Rahmen zeigt, dass die Karte gefunden wurde — dann stimmen Nummer, Set und Rarity. „Foto aufnehmen" ist noch schärfer und läuft nebenher.'
+              : 'Ganze Karte ins Bild, dann tippen. Der grüne Rahmen zeigt, dass die Karte gefunden wurde. „Foto aufnehmen" ist der schärfste Weg.'}
           </p>
 
           <div className="row">
