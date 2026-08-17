@@ -606,7 +606,19 @@ export function regionInGuide(region: Rect, elementWidth: number, elementHeight:
  * number on the left of the last line, the set code above and to the right.
  */
 export const PASSCODE_LINE: Rect = { x: 0, y: 0, width: 1, height: 1 };
-export const SET_CODE_LINE: Rect = { x: 0.3, y: 0, width: 0.7, height: 1 };
+
+/**
+ * The set code, in the same coordinates — and it sits *above* the box.
+ *
+ * The box is held on the card's bottom edge, where the number is. The set code is
+ * printed further up, on the right, in the gap between the artwork and the text box.
+ * Measured from a real reading, searching level with the number returns the attack and
+ * defence line instead: `ATKH ATKLICHT ... 11000ATKS0`.
+ *
+ * Negative coordinates are the point: this reaches up out of the box, a few box
+ * heights, on the right hand side where the code is right-aligned.
+ */
+export const SET_CODE_LINE: Rect = { x: 0.35, y: -3.4, width: 0.65, height: 3.2 };
 
 /**
  * Maps a rectangle expressed in fractions of the *displayed* element onto pixels of
