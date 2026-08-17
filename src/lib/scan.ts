@@ -226,7 +226,24 @@ export interface ThresholdOptions {
   window?: number;
   /** A pixel is ink when it is darker than `bias` times its local mean. */
   bias?: number;
+  /** Below this local spread, in grey levels, the area counts as empty. */
+  minContrast?: number;
 }
+
+/**
+ * How much a neighbourhood has to vary before anything in it counts as ink.
+ *
+ * A purely relative rule has no answer for an area with nothing in it. On the table
+ * under a card, on the card's plain border, on a smooth stretch of foil, there is no
+ * signal — only sensor noise — and with the cut sitting just above the local mean
+ * roughly half of those pixels come out as ink. Measured on a real scan, that turned
+ * the lower half of the crop into a field of tens of thousands of specks, which the
+ * text engine then worked through one by one: thirty frames checked, nothing found.
+ *
+ * Printed digits vary by tens of grey levels against their surroundings. An empty
+ * surface varies by two or three. Six sits in between with room on both sides.
+ */
+export const MIN_CONTRAST = 6;
 
 /**
  * Local (adaptive) thresholding: every pixel is compared with the mean of its
@@ -245,20 +262,33 @@ export function adaptiveThreshold(
   height: number,
   options: ThresholdOptions = {},
 ): Uint8Array {
-  const { window = 0.08, bias = 0.95 } = options;
+  const { window = 0.08, bias = 0.95, minContrast = MIN_CONTRAST } = options;
   const out = new Uint8Array(width * height);
   if (width <= 0 || height <= 0) return out;
 
-  // integral[(y+1)*(w+1) + x+1] = sum of all pixels above and left of (x, y).
+  // integral[(y+1)*(w+1) + x+1] = sum of all pixels above and left of (x, y); the
+  // second one holds the sum of their squares, which is what makes the local spread
+  // as cheap to ask for as the local mean.
   const stride = width + 1;
   const integral = new Float64Array(stride * (height + 1));
+  const squares = new Float64Array(stride * (height + 1));
   for (let y = 0; y < height; y += 1) {
     let rowSum = 0;
+    let rowSquares = 0;
     for (let x = 0; x < width; x += 1) {
-      rowSum += grey[y * width + x] ?? 0;
+      const value = grey[y * width + x] ?? 0;
+      rowSum += value;
+      rowSquares += value * value;
       integral[(y + 1) * stride + x + 1] = (integral[y * stride + x + 1] ?? 0) + rowSum;
+      squares[(y + 1) * stride + x + 1] = (squares[y * stride + x + 1] ?? 0) + rowSquares;
     }
   }
+
+  const box = (source: Float64Array, x0: number, y0: number, x1: number, y1: number): number =>
+    (source[(y1 + 1) * stride + x1 + 1] ?? 0) -
+    (source[y0 * stride + x1 + 1] ?? 0) -
+    (source[(y1 + 1) * stride + x0] ?? 0) +
+    (source[y0 * stride + x0] ?? 0);
 
   const radius = Math.max(4, Math.floor(Math.min(width, height) * window));
   for (let y = 0; y < height; y += 1) {
@@ -268,12 +298,15 @@ export function adaptiveThreshold(
       const x0 = Math.max(0, x - radius);
       const x1 = Math.min(width - 1, x + radius);
       const area = (x1 - x0 + 1) * (y1 - y0 + 1);
-      const sum =
-        (integral[(y1 + 1) * stride + x1 + 1] ?? 0) -
-        (integral[y0 * stride + x1 + 1] ?? 0) -
-        (integral[(y1 + 1) * stride + x0] ?? 0) +
-        (integral[y0 * stride + x0] ?? 0);
-      const mean = sum / area;
+      const mean = box(integral, x0, y0, x1, y1) / area;
+      const variance = box(squares, x0, y0, x1, y1) / area - mean * mean;
+
+      // Nothing to see here, so nothing is invented. Without this, an empty stretch
+      // of table or a smooth patch of foil comes out as a field of speckle.
+      if (variance < minContrast * minContrast) {
+        out[y * width + x] = 255;
+        continue;
+      }
       out[y * width + x] = (grey[y * width + x] ?? 0) < mean * bias ? 0 : 255;
     }
   }

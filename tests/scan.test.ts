@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AUTO_VARIANTS,
   CLEAR_AFTER_MS,
+  adaptiveThreshold,
   extractSetCode,
   matchPasscode,
   NO_MEMORY,
@@ -132,6 +133,57 @@ describe('videoSourceRect', () => {
 
   it('survives a stream that has not started yet', () => {
     expect(videoSourceRect(0, 0, SET_CODE_REGION)).toEqual({ sx: 0, sy: 0, sw: 0, sh: 0 });
+  });
+});
+
+describe('adaptiveThreshold', () => {
+  /** A flat surface with nothing on it but sensor noise, the way a table looks. */
+  function emptySurface(width: number, height: number): Float64Array {
+    const grey = new Float64Array(width * height);
+    for (let i = 0; i < grey.length; i += 1) grey[i] = 180 + ((i * 7919) % 5) - 2;
+    return grey;
+  }
+
+  it('finds no ink on an empty surface', () => {
+    // Without a contrast floor this is where a scan drowns: roughly half of a
+    // featureless area comes out as ink and the engine works through every speck.
+    const grey = emptySurface(60, 60);
+    const out = adaptiveThreshold(grey, 60, 60, { bias: 1.02 });
+    expect(out.every((value) => value === 255)).toBe(true);
+  });
+
+  it('still finds real print on the same surface', () => {
+    const width = 60;
+    const height = 60;
+    const grey = emptySurface(width, height);
+    // Two thin strokes, the width printed digits actually have against the window
+    // the threshold looks through.
+    for (let y = 20; y < 40; y += 1) {
+      grey[y * width + 25] = 30;
+      grey[y * width + 26] = 30;
+    }
+    const out = adaptiveThreshold(grey, width, height, { bias: 1.02 });
+    expect(out[30 * width + 25]).toBe(0);
+    expect(out[5 * width + 5]).toBe(255);
+  });
+
+  it('treats a large flat dark area as empty, because print is never that', () => {
+    // The inside of a wide dark block has no more contrast than an empty table, and
+    // is no more likely to be a letter. Only its edges carry any information.
+    const width = 60;
+    const height = 60;
+    const grey = new Float64Array(width * height).fill(200);
+    for (let y = 20; y < 40; y += 1) for (let x = 15; x < 45; x += 1) grey[y * width + x] = 30;
+    const out = adaptiveThreshold(grey, width, height, { bias: 1.02 });
+    expect(out[30 * width + 30]).toBe(255);
+    // The edge, where dark meets light, is where the contrast is.
+    expect(out[30 * width + 16]).toBe(0);
+  });
+
+  it('can have the floor turned off, which is what the old behaviour was', () => {
+    const grey = emptySurface(40, 40);
+    const out = adaptiveThreshold(grey, 40, 40, { bias: 1.02, minContrast: 0 });
+    expect(out.some((value) => value === 0)).toBe(true);
   });
 });
 
