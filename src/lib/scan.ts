@@ -262,7 +262,7 @@ export function adaptiveThreshold(
   height: number,
   options: ThresholdOptions = {},
 ): Uint8Array {
-  const { window = 0.08, bias = 0.95, minContrast = MIN_CONTRAST } = options;
+  const { window = 0.03, bias = 0.95, minContrast = MIN_CONTRAST } = options;
   const out = new Uint8Array(width * height);
   if (width <= 0 || height <= 0) return out;
 
@@ -314,17 +314,25 @@ export function adaptiveThreshold(
 }
 
 /**
- * How hard to cut when deciding what is ink.
+ * How to cut ink out of the picture, tried in this order.
  *
- * Two settings, because no single one wins: a sharp frame reads best when the cut
- * sits just under the local mean, while a soft or dim one needs a cut slightly above
- * it or the already-faint strokes are thinned away to nothing. The scanner tries
- * both rather than betting on the light being good.
+ * Two settings, because no single one wins, and the *window* matters more than the
+ * cut. Measured on a card lying on a light table: with the neighbourhood at 8 % of
+ * the crop — some ninety pixels around a digit forty pixels tall — the bright table
+ * pulls the local mean up and the whole bottom of the card comes out as one black
+ * mass with the number buried in it. Nothing was read at all. At 3 % the same card
+ * reads in under five seconds, set code and rarity included.
+ *
+ * The second pass is coarser and cuts slightly above the mean, for a soft or dim
+ * frame whose faint strokes the sharp setting thins away to nothing.
  */
-export const THRESHOLD_BIASES = [0.95, 1.02];
+export const THRESHOLD_PASSES: ThresholdOptions[] = [
+  { window: 0.03, bias: 0.95 },
+  { window: 0.06, bias: 1.02 },
+];
 
 /** Greyscale, adaptive threshold, optionally inverted for light-on-dark print. */
-export function preprocess(canvas: HTMLCanvasElement, invert = false, bias = THRESHOLD_BIASES[0]!): void {
+export function preprocess(canvas: HTMLCanvasElement, invert = false, threshold: ThresholdOptions = THRESHOLD_PASSES[0]!): void {
   const context = canvas.getContext('2d', { willReadFrequently: true });
   if (!context) return;
   const image = context.getImageData(0, 0, canvas.width, canvas.height);
@@ -336,7 +344,7 @@ export function preprocess(canvas: HTMLCanvasElement, invert = false, bias = THR
     grey[p] = data[i]! * 0.299 + data[i + 1]! * 0.587 + data[i + 2]! * 0.114;
   }
 
-  const mask = adaptiveThreshold(grey, canvas.width, canvas.height, { bias });
+  const mask = adaptiveThreshold(grey, canvas.width, canvas.height, threshold);
   for (let p = 0; p < pixels; p += 1) {
     // Tesseract wants dark text on white.
     const value = invert ? 255 - mask[p]! : mask[p]!;
@@ -379,7 +387,7 @@ export interface PassVariant {
   wide: boolean;
   /** Invert the crop, for cards printing light on a dark border. */
   invert: boolean;
-  bias: number;
+  threshold: ThresholdOptions;
   mode: OcrMode;
 }
 
@@ -393,7 +401,7 @@ export interface PassVariant {
  */
 export const PASS_VARIANTS: PassVariant[] = [false, true].flatMap((invert) =>
   [true, false].flatMap((wide) =>
-    THRESHOLD_BIASES.flatMap((bias) => OCR_MODES.map((mode) => ({ wide, invert, bias, mode }))),
+    THRESHOLD_PASSES.flatMap((threshold) => OCR_MODES.map((mode) => ({ wide, invert, threshold, mode }))),
   ),
 );
 
@@ -402,7 +410,7 @@ export const PASS_VARIANTS: PassVariant[] = [false, true].flatMap((invert) =>
  * the inverted crops, which stay a tap away so an ordinary card is not made to wait
  * behind them.
  */
-export const AUTO_VARIANTS = 2 * THRESHOLD_BIASES.length * OCR_MODES.length;
+export const AUTO_VARIANTS = 2 * THRESHOLD_PASSES.length * OCR_MODES.length;
 
 /**
  * Which single combination the continuous scanner tries on a given tick.
@@ -769,16 +777,16 @@ export function wordCentre(word: WordBox, crop: Crop): { x: number; y: number } 
 export interface CropOptions {
   invert?: boolean;
   scale?: number;
-  bias?: number;
+  threshold?: ThresholdOptions;
   turn?: Turn;
 }
 
 function drawCrop(
   frame: Frame,
   rect: { sx: number; sy: number; sw: number; sh: number },
-  options: { invert: boolean; scale: number; turn: Turn; bias: number | undefined },
+  options: { invert: boolean; scale: number; turn: Turn; threshold: ThresholdOptions | undefined },
 ): Crop {
-  const { invert, scale, turn, bias } = options;
+  const { invert, scale, turn, threshold } = options;
   const wide = Math.max(1, Math.round(rect.sw * scale));
   const tall = Math.max(1, Math.round(rect.sh * scale));
   const turned = turn === 90 || turn === 270;
@@ -801,7 +809,7 @@ function drawCrop(
     }
     context.drawImage(frame.image, rect.sx, rect.sy, rect.sw, rect.sh, 0, 0, wide, tall);
     context.setTransform(1, 0, 0, 1, 0, 0);
-    preprocess(canvas, invert, bias);
+    preprocess(canvas, invert, threshold);
   }
   return { canvas, sx: rect.sx, sy: rect.sy, sw: rect.sw, sh: rect.sh, scale, turn };
 }
@@ -812,13 +820,13 @@ export function cropPixels(
   rect: { sx: number; sy: number; sw: number; sh: number },
   options: CropOptions = {},
 ): Crop {
-  const { invert = false, scale = 3, bias, turn = 0 } = options;
+  const { invert = false, scale = 3, threshold, turn = 0 } = options;
   const sx = Math.max(0, Math.min(rect.sx, frame.width));
   const sy = Math.max(0, Math.min(rect.sy, frame.height));
   return drawCrop(
     frame,
     { sx, sy, sw: Math.min(rect.sw, frame.width - sx), sh: Math.min(rect.sh, frame.height - sy) },
-    { invert, scale, turn, bias },
+    { invert, scale, turn, threshold },
   );
 }
 
@@ -828,8 +836,8 @@ export function cropVideoRegion(
   region: Rect = SET_CODE_REGION,
   options: CropOptions = {},
 ): Crop {
-  const { invert = false, scale = 2, bias, turn = 0 } = options;
-  return drawCrop(frame, videoSourceRect(frame.width, frame.height, region), { invert, scale, turn, bias });
+  const { invert = false, scale = 2, threshold, turn = 0 } = options;
+  return drawCrop(frame, videoSourceRect(frame.width, frame.height, region), { invert, scale, turn, threshold });
 }
 
 export function cropRegion(
@@ -837,7 +845,7 @@ export function cropRegion(
   region: Rect = PASSCODE_REGION,
   options: CropOptions = {},
 ): Crop {
-  const { invert = false, scale = 4, bias, turn = 0 } = options;
+  const { invert = false, scale = 4, threshold, turn = 0 } = options;
   const rect = coverSourceRect(
     frame.width,
     frame.height,
@@ -845,7 +853,7 @@ export function cropRegion(
     frame.elementHeight,
     region,
   );
-  return drawCrop(frame, rect, { invert, scale, turn, bias });
+  return drawCrop(frame, rect, { invert, scale, turn, threshold });
 }
 
 /**

@@ -657,10 +657,10 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     // Each distinct crop is built once and reused by every variant that wants it.
     const crops = new Map<string, Crop>();
     function cropFor(variant: PassVariant, turn: Turn): Crop {
-      const key = `${variant.wide}:${variant.invert}:${variant.bias}:${turn}`;
+      const key = `${variant.wide}:${variant.invert}:${variant.threshold.window}:${variant.threshold.bias}:${turn}`;
       const existing = crops.get(key);
       if (existing) return existing;
-      const options = { invert: variant.invert, bias: variant.bias, turn };
+      const options = { invert: variant.invert, threshold: variant.threshold, turn };
       /*
        * The band turns with the card: a quarter turn moves the passcode to the side
        * of the picture, outside a band fixed to the bottom. Two widths, because the

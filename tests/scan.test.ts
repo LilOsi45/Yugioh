@@ -258,7 +258,7 @@ describe('passVariant', () => {
     const seen = new Set<string>();
     for (let tick = 0; tick < AUTO_VARIANTS; tick += 1) {
       const variant = passVariant(tick);
-      seen.add(`${variant.wide}:${variant.invert}:${variant.bias}:${variant.mode.psm}`);
+      seen.add(`${variant.wide}:${variant.invert}:${variant.threshold.window}:${variant.mode.psm}`);
     }
     expect(seen.size).toBe(AUTO_VARIANTS);
   });
