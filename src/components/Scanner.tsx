@@ -17,9 +17,11 @@ import {
   SET_CODE_SPAN,
   WIDE_BAND,
   passVariant,
+  THRESHOLD_PASSES,
   pointInFrame,
   samplePatch,
   samplePixels,
+  OCR_MODES,
   SET_CODE_MODE,
   SET_CODE_SPARSE_MODE,
   stepScan,
@@ -122,6 +124,23 @@ const RARITY_SAMPLES = 3;
 
 const RARITY_GAP_MS = 70;
 
+/**
+ * How wide a photograph is scaled to before reading. A phone hands over twelve
+ * megapixels; past this the extra pixels cost seconds and add nothing, because the
+ * digits are already several times taller than the engine needs.
+ */
+const PHOTO_WIDTH = 2400;
+
+/**
+ * Where to look in a photograph, in order. The bottom third first — that is where the
+ * number is on a card that fills the frame, and it is the fastest read — then the
+ * whole picture, which finds it wherever it ended up.
+ */
+const PHOTO_REGIONS: Rect[] = [
+  { x: 0, y: 0.6, width: 1, height: 0.4 },
+  { x: 0, y: 0, width: 1, height: 1 },
+];
+
 interface Entry {
   key: number;
   result: ScanResult;
@@ -212,6 +231,8 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
   const preview = useRef<HTMLCanvasElement>(null);
   const stream = useRef<MediaStream | null>(null);
   const ocr = useRef<OcrScanner | null>(null);
+  /** The phone's own camera app, which focuses and gives back the full sensor. */
+  const photo = useRef<HTMLInputElement>(null);
 
   const [status, setStatus] = useState<Status>('starting');
   const [engine, setEngine] = useState<Engine>('loading');
@@ -860,6 +881,88 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
   }, [status, engine, attempt]);
 
   /** The button: a request the loop serves next, never a silent no-op. */
+  /**
+   * Reads a photograph taken with the phone's own camera app.
+   *
+   * The live preview is the weakest picture the phone can give: a couple of megapixels,
+   * compressed for streaming, exposed for the whole scene and often not focused at
+   * arm's length. Everything that went wrong with this scanner came back to that — an
+   * eight digit number sixteen pixels tall, blurred by a hand that never holds still.
+   *
+   * A photo is a different thing entirely. The camera app focuses, meters, steadies
+   * and hands back the sensor's full resolution, where the same number is a hundred
+   * pixels tall and sharp. At that size the reading needs no guide box, no band and no
+   * geometry: the whole picture is searched, and whatever eight digit run matches a
+   * real card wins.
+   */
+  async function scanPhoto(file: File): Promise<void> {
+    const scanner = ocr.current;
+    if (!scanner) return;
+    setWorking(true);
+    setFeedback(null);
+    setReading('Foto wird gelesen…');
+    try {
+      const bitmap = await createImageBitmap(file);
+      // A phone photo is far larger than the engine needs; past about this width the
+      // extra pixels only cost time.
+      const scale = Math.min(1, PHOTO_WIDTH / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(bitmap.width * scale);
+      canvas.height = Math.round(bitmap.height * scale);
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) return;
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      bitmap.close?.();
+
+      const frame: Frame = {
+        image: canvas,
+        width: canvas.width,
+        height: canvas.height,
+        elementWidth: canvas.width,
+        elementHeight: canvas.height,
+      };
+
+      const readings: string[] = [];
+      for (const [index, region] of PHOTO_REGIONS.entries()) {
+        for (const threshold of THRESHOLD_PASSES) {
+          for (const mode of OCR_MODES) {
+            setReading(`Foto: Versuch ${index + 1}…`);
+            const crop = cropVideoRegion(frame, region, { threshold, scale: 1 });
+            showPreview(crop.canvas);
+            const reading = await scanner.read(crop.canvas, mode, true);
+            const cleaned = reading.text.replace(/\s+/g, '');
+            if (cleaned) readings.push(cleaned.slice(0, 30));
+
+            // A photo is sharp enough that a repaired digit is a real near miss and
+            // not the noise the continuous scan produces, so repairs are allowed.
+            const match = matchPasscode(reading.text, db, { repair: true });
+            if (!match) continue;
+
+            let setCode: string | null = null;
+            try {
+              const found = await readSetCode(frame, crop, match.card, scanner, null, 0);
+              setCode = found?.code ?? null;
+            } catch {
+              // A missing set code is a detail, not a failed scan.
+            }
+            memory.current = NO_MEMORY;
+            setReading(null);
+            record({ card: match.card, setCode }, match.exact);
+            return;
+          }
+        }
+      }
+      setReading(readings.length > 0 ? `gelesen: ${readings.join(' / ').slice(0, 60)}` : null);
+      setFeedback(
+        'Auf dem Foto war keine bekannte Nummer zu finden. Näher ran, so dass die Karte das Bild füllt, und die Nummer scharf ist.',
+      );
+    } catch (photoError) {
+      setFeedback(`Foto konnte nicht gelesen werden: ${photoError instanceof Error ? photoError.message : String(photoError)}`);
+    } finally {
+      setWorking(false);
+    }
+  }
+
   function capture() {
     if (statusRef.current !== 'ready') return;
     pendingManual.current = true;
@@ -966,13 +1069,20 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
 
           <p className="muted" style={{ fontSize: 12.5, margin: '8px 0 0' }}>
             {auto
-              ? 'Untere Kartenkante in den Kasten — nah ran, bis die achtstellige Nummer den Kasten fast ausfüllt. Je größer sie im Bild ist, desto sicherer wird sie gelesen. Bei Folienkarten meist ohne Licht besser.'
-              : 'Untere Kartenkante nah in den Kasten halten, dann auf Scannen tippen.'}
+              ? 'Am sichersten: „Foto aufnehmen" — die Kamera-App stellt scharf und liefert ein vielfach schärferes Bild als die Vorschau. Karte formatfüllend fotografieren. Der Live-Scan im Kasten läuft nebenher weiter.'
+              : 'Am sichersten: „Foto aufnehmen", Karte formatfüllend. Sonst untere Kartenkante nah in den Kasten halten.'}
           </p>
 
           <div className="row">
-            <button className="primary" onClick={capture} disabled={status !== 'ready' || engine === 'failed'}>
-              {working ? 'Lese…' : 'Jetzt scannen'}
+            <button
+              className="primary"
+              onClick={() => photo.current?.click()}
+              disabled={engine !== 'ready' || working}
+            >
+              {working ? 'Lese…' : 'Foto aufnehmen'}
+            </button>
+            <button onClick={capture} disabled={status !== 'ready' || engine === 'failed'}>
+              Bild jetzt prüfen
             </button>
             <button onClick={() => setAuto((value) => !value)}>{auto ? 'Auto-Scan aus' : 'Auto-Scan an'}</button>
             {torchAvailable && <button onClick={toggleTorch}>{torch ? 'Licht aus' : 'Licht an'}</button>}
@@ -1018,6 +1128,21 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
             </p>
           )}
           <canvas ref={preview} className="scanpreview" />
+
+          {/* The camera app rather than the live preview: it focuses, meters and hands
+              back the full sensor, where the number is sharp and many times larger. */}
+          <input
+            ref={photo}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            style={{ display: 'none' }}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = '';
+              if (file) void scanPhoto(file);
+            }}
+          />
 
           {/* If the camera will not read a card, the number under it still can be
               typed — eight digits is faster than fighting the light. */}
