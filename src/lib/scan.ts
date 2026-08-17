@@ -815,12 +815,28 @@ export interface CropOptions {
   turn?: Turn;
 }
 
+/**
+ * The longest side a crop may have before it is scaled down instead of up.
+ *
+ * Measured on the phone this app is used on: a 1440 × 2560 camera, a crop of the
+ * viewfinder box enlarged four times, is nearly nine megapixels — and text recognition
+ * in the browser needs tens of seconds for that. Three frames checked in a session,
+ * and a tap that timed out at "attempt 7 of 16". Nothing was ever read *wrongly*; it
+ * simply never finished.
+ *
+ * The engine wants letters roughly thirty to sixty pixels tall and gains nothing from
+ * more. A phone camera already delivers that at native size, so the enlargement was
+ * pure cost.
+ */
+const MAX_CROP_SIDE = 1600;
+
 function drawCrop(
   frame: Frame,
   rect: { sx: number; sy: number; sw: number; sh: number },
   options: { invert: boolean; scale: number; turn: Turn; threshold: ThresholdOptions | undefined },
 ): Crop {
-  const { invert, scale, turn, threshold } = options;
+  const { invert, turn, threshold } = options;
+  const scale = Math.min(options.scale, MAX_CROP_SIDE / Math.max(1, rect.sw, rect.sh));
   const wide = Math.max(1, Math.round(rect.sw * scale));
   const tall = Math.max(1, Math.round(rect.sh * scale));
   const turned = turn === 90 || turn === 270;
