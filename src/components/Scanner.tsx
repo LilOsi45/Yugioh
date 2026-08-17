@@ -1124,8 +1124,8 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
 
           <p className="muted" style={{ fontSize: 12.5, margin: '8px 0 0' }}>
             {auto
-              ? 'Am sichersten: „Foto aufnehmen" — die Kamera-App stellt scharf und liefert ein vielfach schärferes Bild als die Vorschau. Karte formatfüllend fotografieren. Der Live-Scan im Kasten läuft nebenher weiter.'
-              : 'Am sichersten: „Foto aufnehmen", Karte formatfüllend. Sonst untere Kartenkante nah in den Kasten halten.'}
+              ? 'Ganze Karte in den Umriss legen — nur so sind Set-Code und Rarity überhaupt im Bild. „Foto aufnehmen" ist noch schärfer, der Live-Scan läuft nebenher weiter.'
+              : 'Ganze Karte in den Umriss legen, dann tippen. Set-Code und Rarity werden mitgelesen. „Foto aufnehmen" ist der schärfste Weg.'}
           </p>
 
           <div className="row">

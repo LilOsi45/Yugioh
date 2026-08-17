@@ -7,6 +7,7 @@ import {
   extractSetCode,
   guideBox,
   PASSCODE_LINE,
+  SET_CODE_LINE,
   regionInGuide,
   matchPasscode,
   NO_MEMORY,
@@ -113,24 +114,48 @@ describe('extractSetCode', () => {
 });
 
 describe('guideBox and regionInGuide', () => {
-  // A 390 x 520 viewfinder, the shape the app draws (3:4).
+  // A 390 x 546 viewfinder, the shape the app draws (5:7).
   const W = 390;
-  const H = 520;
+  const H = 546;
 
-  it('marks the bottom edge of a card, not the whole card', () => {
+  it('outlines a whole card, in a card\'s proportions', () => {
     const box = guideBox(W, H);
-    // Wide and flat: a card held close enough to fill this has its number several
-    // times larger than one framed whole, which is what the reading lives on.
-    expect(box.width / box.height).toBeGreaterThan(2);
-    expect(box.y + box.height).toBeLessThan(1);
+    // In pixels, not in fractions: the outline has to look like a card on screen,
+    // whatever shape the viewfinder is.
+    expect((box.width * W) / (box.height * H)).toBeCloseTo(59 / 86, 3);
+    expect(box.width).toBeLessThanOrEqual(1);
+    expect(box.y + box.height).toBeLessThanOrEqual(1);
+    // Centred, so it is the same instruction whichever way the phone is held.
+    expect(box.x).toBeCloseTo((1 - box.width) / 2, 6);
   });
 
-  it('lands on real camera pixels through the cover crop', () => {
+  it('keeps the card shape in a wide viewfinder by shrinking the height', () => {
+    const box = guideBox(600, 300);
+    expect((box.width * 600) / (box.height * 300)).toBeCloseTo(59 / 86, 3);
+    expect(box.width).toBeLessThanOrEqual(1);
+  });
+
+  it('cuts the number line from the bottom edge of the card, not the effect text', () => {
     const box = guideBox(W, H);
-    const rect = coverSourceRect(1920, 1080, W, H, regionInGuide(PASSCODE_LINE, W, H));
-    // Cover fills the height here, so the box's share of the height carries over.
-    expect(rect.sh).toBeCloseTo(box.height * 1080, 1);
-    expect(rect.sy).toBeCloseTo(box.y * 1080, 1);
+    const line = regionInGuide(PASSCODE_LINE, W, H);
+    // Inside the outline, and in its last tenth: one line higher is the effect text,
+    // which reads back as fifteen digits and buries the eight that matter.
+    expect(line.y).toBeGreaterThan(box.y + 0.9 * box.height);
+    expect(line.y + line.height).toBeCloseTo(box.y + box.height, 6);
+
+    const rect = coverSourceRect(1920, 1080, W, H, line);
+    // Cover fills the height here, so element fractions carry straight over.
+    expect(rect.sh).toBeCloseTo(line.height * 1080, 1);
+    expect(rect.sy).toBeCloseTo(line.y * 1080, 1);
+  });
+
+  it('looks for the set code on the right, above the text box', () => {
+    const box = guideBox(W, H);
+    const code = regionInGuide(SET_CODE_LINE, W, H);
+    // Right hand half of the card, and well above the number line.
+    expect(code.x).toBeGreaterThan(box.x + 0.4 * box.width);
+    expect(code.x + code.width).toBeCloseTo(box.x + box.width, 6);
+    expect(code.y + code.height).toBeLessThan(box.y + 0.7 * box.height);
   });
 
   it('survives a viewfinder that has not been laid out yet', () => {
