@@ -902,17 +902,34 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     setFeedback(null);
     setReading('Foto wird gelesen…');
     try {
-      const bitmap = await createImageBitmap(file);
+      /*
+       * Loaded through an <img> rather than createImageBitmap, for two reasons that
+       * both end in "nothing is read at all":
+       *
+       *  - A phone stores a photo the way the sensor saw it and puts the rotation in
+       *    an EXIF tag. `createImageBitmap` ignores that tag, so a picture taken
+       *    upright decodes on its side and every line of text runs vertically.
+       *  - iPhones write HEIC. An <img> hands that to the system decoder; not every
+       *    browser's createImageBitmap will.
+       */
+      const url = URL.createObjectURL(file);
+      const image = new Image();
+      await new Promise<void>((resolve, reject) => {
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error('Bildformat wird nicht unterstützt'));
+        image.src = url;
+      });
+      const source = { width: image.naturalWidth, height: image.naturalHeight };
       // A phone photo is far larger than the engine needs; past about this width the
       // extra pixels only cost time.
-      const scale = Math.min(1, PHOTO_WIDTH / Math.max(bitmap.width, bitmap.height));
+      const scale = Math.min(1, PHOTO_WIDTH / Math.max(source.width, source.height));
       const canvas = document.createElement('canvas');
-      canvas.width = Math.round(bitmap.width * scale);
-      canvas.height = Math.round(bitmap.height * scale);
+      canvas.width = Math.round(source.width * scale);
+      canvas.height = Math.round(source.height * scale);
       const context = canvas.getContext('2d', { willReadFrequently: true });
       if (!context) return;
-      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-      bitmap.close?.();
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
 
       const frame: Frame = {
         image: canvas,
@@ -923,11 +940,17 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
       };
 
       const readings: string[] = [];
-      for (const [index, region] of PHOTO_REGIONS.entries()) {
-        for (const threshold of THRESHOLD_PASSES) {
+      let step = 0;
+      const total = PHOTO_REGIONS.length * THRESHOLD_PASSES.length * OCR_MODES.length * TURNS.length;
+      // Every quarter turn as well: a photo of a card lying on a table can come out
+      // any way up, and the engine reads horizontal text and nothing else.
+      for (const region of PHOTO_REGIONS) {
+        for (const turn of TURNS) {
+          for (const threshold of THRESHOLD_PASSES) {
           for (const mode of OCR_MODES) {
-            setReading(`Foto: Versuch ${index + 1}…`);
-            const crop = cropVideoRegion(frame, region, { threshold, scale: 1 });
+            step += 1;
+            setReading(`Foto: Versuch ${step} von ${total}…`);
+            const crop = cropVideoRegion(frame, region, { threshold, scale: 1, turn });
             showPreview(crop.canvas);
             const reading = await scanner.read(crop.canvas, mode, true);
             const cleaned = reading.text.replace(/\s+/g, '');
@@ -940,7 +963,7 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
 
             let setCode: string | null = null;
             try {
-              const found = await readSetCode(frame, crop, match.card, scanner, null, 0);
+              const found = await readSetCode(frame, crop, match.card, scanner, null, turn);
               setCode = found?.code ?? null;
             } catch {
               // A missing set code is a detail, not a failed scan.
@@ -950,9 +973,10 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
             record({ card: match.card, setCode }, match.exact);
             return;
           }
+          }
         }
       }
-      setReading(readings.length > 0 ? `gelesen: ${readings.join(' / ').slice(0, 60)}` : null);
+      setReading(readings.length > 0 ? `gelesen: ${readings.join(' / ').slice(0, 120)}` : 'nichts lesbar im Foto');
       setFeedback(
         'Auf dem Foto war keine bekannte Nummer zu finden. Näher ran, so dass die Karte das Bild füllt, und die Nummer scharf ist.',
       );
