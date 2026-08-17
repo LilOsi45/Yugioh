@@ -624,18 +624,13 @@ footer.app {
 /*
  * The outline of a whole card, in the proportions of a real one (59 × 86 mm).
  *
- * It used to mark just the bottom strip, where the passcode is. That was too little
- * for what the scanner reads now: the set code sits in the far corner, and the rarity
- * is measured from the name and the artwork. Filling this outline puts all of it in
- * front of the lens at once.
+ * Position and size come from `guideBox` in src/lib/scan.ts, not from here: the crops
+ * handed to the text recognition are cut from that same rectangle, and if the outline
+ * on screen and those crops disagree, the scanner reads a part of the picture the user
+ * was not aiming at.
  */
 .scanguide {
   position: absolute;
-  top: 5%;
-  bottom: 5%;
-  left: 50%;
-  transform: translateX(-50%);
-  aspect-ratio: 59 / 86;
   border: 2px solid var(--accent);
   border-radius: 8px;
   box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);

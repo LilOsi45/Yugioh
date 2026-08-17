@@ -3,7 +3,11 @@ import {
   AUTO_VARIANTS,
   CLEAR_AFTER_MS,
   adaptiveThreshold,
+  coverSourceRect,
   extractSetCode,
+  guideBox,
+  PASSCODE_LINE,
+  regionInGuide,
   matchPasscode,
   NO_MEMORY,
   PASS_VARIANTS,
@@ -107,6 +111,43 @@ describe('extractSetCode', () => {
 
   it('returns nothing for a card with no printings', () => {
     expect(extractSetCode('PHNI-DE087', cardNamed(db, 'Triple Tactics Talent'))).toBeNull();
+  });
+});
+
+describe('guideBox and regionInGuide', () => {
+  // A 390 x 520 viewfinder, the shape the app draws (3:4).
+  const W = 390;
+  const H = 520;
+
+  it('puts the outline where the card is asked to go', () => {
+    const box = guideBox(W, H);
+    expect(box.y).toBeCloseTo(0.05, 6);
+    expect(box.height).toBeCloseTo(0.9, 6);
+    // 90 % of 520 px tall at 59:86 is 321 px wide, centred in 390.
+    expect(box.width * W).toBeCloseTo(0.9 * H * (59 / 86), 1);
+    expect(box.x).toBeCloseTo((1 - box.width) / 2, 6);
+  });
+
+  it('maps the number line onto the bottom of the outline', () => {
+    const line = regionInGuide(PASSCODE_LINE, W, H);
+    const box = guideBox(W, H);
+    expect(line.y).toBeCloseTo(box.y + 0.9 * box.height, 6);
+    expect(line.height).toBeCloseTo(0.1 * box.height, 6);
+    // It ends where the card ends, not where the picture ends.
+    expect(line.y + line.height).toBeCloseTo(0.95, 6);
+    expect(line.y + line.height).toBeLessThan(1);
+  });
+
+  it('lands on real camera pixels through the cover crop', () => {
+    // 1920x1080 shown in 390x520 with object-fit: cover fills the height, so the
+    // number line's height in camera pixels is the same fraction of 1080.
+    const rect = coverSourceRect(1920, 1080, W, H, regionInGuide(PASSCODE_LINE, W, H));
+    expect(rect.sh).toBeCloseTo(0.1 * 0.9 * 1080, 1);
+    expect(rect.sy).toBeCloseTo((0.05 + 0.9 * 0.9) * 1080, 1);
+  });
+
+  it('survives a viewfinder that has not been laid out yet', () => {
+    expect(guideBox(0, 0)).toEqual({ x: 0, y: 0, width: 1, height: 1 });
   });
 });
 
@@ -263,16 +304,16 @@ describe('passVariant', () => {
     expect(seen.size).toBe(AUTO_VARIANTS);
   });
 
-  it('starts with the whole frame, which is where a fully framed card is read', () => {
+  it('starts with the outline, which is the one place the card is known to be', () => {
     expect(passVariant(0)).toEqual(PASS_VARIANTS[0]);
     expect(passVariant(0).invert).toBe(false);
-    expect(passVariant(0).wide).toBe(true);
+    expect(passVariant(0).wide).toBe(false);
   });
 
-  it('gets to the sharper viewfinder crop within one cycle, for a card held close', () => {
-    const close = [];
-    for (let tick = 0; tick < AUTO_VARIANTS; tick += 1) if (!passVariant(tick).wide) close.push(tick);
-    expect(close.length).toBe(AUTO_VARIANTS / 2);
+  it('gets to the band of the picture within one cycle, for a card outside the outline', () => {
+    const band = [];
+    for (let tick = 0; tick < AUTO_VARIANTS; tick += 1) if (passVariant(tick).wide) band.push(tick);
+    expect(band.length).toBe(AUTO_VARIANTS / 2);
   });
 
   it('leaves the inverted crops to a tap, so an ordinary card is not made to wait', () => {
