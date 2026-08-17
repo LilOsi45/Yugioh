@@ -611,7 +611,12 @@ footer.app {
   border-radius: 10px;
   overflow: hidden;
   background: #000;
-  aspect-ratio: 3 / 4;
+  /*
+   * Close to a card's own shape (59 × 86), so the outline fills the viewfinder
+   * instead of leaving bars beside it. Every pixel the card is not using is a pixel
+   * the number is not printed on.
+   */
+  aspect-ratio: 5 / 7;
 }
 
 .scanview video {

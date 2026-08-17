@@ -1,3 +1,4 @@
+import { CARD_ASPECT } from './cardGeometry';
 import type { Card, Database } from './types';
 
 /**
@@ -562,24 +563,36 @@ export interface Rect {
  * apart, and both times the scanner read a part of the picture the user was not aiming
  * at.
  */
-export const GUIDE_BOX: Rect = { x: 0.04, y: 0.6, width: 0.92, height: 0.22 };
+export const GUIDE_MARGIN = 0.04;
 
 /**
- * Where the outline sits — a wide, flat box for the *bottom edge* of a card, not the
- * whole card.
+ * Where the outline sits — the whole card, at the card's own 59:86 shape.
  *
- * This was the whole card for a while, so the rarity could be measured from the name
- * and the artwork. It cost the thing the scanner exists for. A card that fills the
- * viewfinder puts its eight digit number at about sixteen pixels tall on a 1080 line
- * camera, and text recognition wants twice that; upscaling adds no information that
- * the lens did not capture. Held close enough to fill this box, the same digits are
- * several times bigger and read in seconds.
+ * This was a flat box on the card's bottom edge for a while, on the theory that the
+ * eight digit number was simply too small when the whole card was in view. That was
+ * the wrong diagnosis, and the device said so: with the whole card framed the scanner
+ * checked three pictures in a session and timed out. The cost was never the size of
+ * the digits, it was the size of the *crop* — a guide box on a 1440×2560 camera came
+ * to some nine megapixels per attempt. Capping the crop fixed that, and with it the
+ * reason for the flat box disappeared.
  *
- * The rarity gives way, because a card that is not read at all has no rarity either.
+ * The whole card back in view is what makes the two things the user keeps asking for
+ * possible at all: the set code is printed above the text box, and the rarity is read
+ * off the name and the artwork. Neither is anywhere near the bottom edge.
  */
 export function guideBox(elementWidth: number, elementHeight: number): Rect {
   if (elementWidth <= 0 || elementHeight <= 0) return { x: 0, y: 0, width: 1, height: 1 };
-  return GUIDE_BOX;
+  const usableHeight = 1 - 2 * GUIDE_MARGIN;
+  const usableWidth = 1 - 2 * GUIDE_MARGIN;
+  // The outline keeps the card's shape whatever shape the viewfinder is, so what is
+  // drawn is a card and not a rectangle that merely contains one.
+  let height = usableHeight;
+  let width = (height * elementHeight * CARD_ASPECT) / elementWidth;
+  if (width > usableWidth) {
+    width = usableWidth;
+    height = (width * elementWidth) / (CARD_ASPECT * elementHeight);
+  }
+  return { x: (1 - width) / 2, y: (1 - height) / 2, width, height };
 }
 
 /**
@@ -600,25 +613,23 @@ export function regionInGuide(region: Rect, elementWidth: number, elementHeight:
 }
 
 /**
- * What to read out of the box, in fractions of the box itself.
+ * The number's line, in fractions of the card: the last strip along the bottom edge.
  *
- * The box is held on the card's bottom edge, so everything wanted is inside it: the
- * number on the left of the last line, the set code above and to the right.
+ * Deliberately shallow. One line above it is the effect text, and a crop that takes
+ * any of it in buries the number — a real reading came back as `328154153381140`,
+ * fifteen digits of effect text with the eight that matter nowhere in them.
  */
-export const PASSCODE_LINE: Rect = { x: 0, y: 0, width: 1, height: 1 };
+export const PASSCODE_LINE: Rect = { x: 0, y: 0.925, width: 1, height: 0.075 };
 
 /**
- * The set code, in the same coordinates — and it sits *above* the box.
+ * The set code, in the same card fractions: right hand side, above the text box.
  *
- * The box is held on the card's bottom edge, where the number is. The set code is
- * printed further up, on the right, in the gap between the artwork and the text box.
- * Measured from a real reading, searching level with the number returns the attack and
- * defence line instead: `ATKH ATKLICHT ... 11000ATKS0`.
- *
- * Negative coordinates are the point: this reaches up out of the box, a few box
- * heights, on the right hand side where the code is right-aligned.
+ * Told plainly by the user, with the card in front of them: "unten links steht der
+ * Karten Code und in der Mitte rechts über dem Kästchen steht welches Set". Searching
+ * level with the number returns the attack and defence line instead —
+ * `ATKH ATKLICHT ... 11000ATKS0`.
  */
-export const SET_CODE_LINE: Rect = { x: 0.35, y: -3.4, width: 0.65, height: 3.2 };
+export const SET_CODE_LINE: Rect = { x: 0.42, y: 0.6, width: 0.58, height: 0.075 };
 
 /**
  * Maps a rectangle expressed in fractions of the *displayed* element onto pixels of
