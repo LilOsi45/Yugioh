@@ -634,8 +634,13 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     const held = preferredTurn.current;
     const attempts: { variant: PassVariant; turn: Turn }[] = manual
       ? [
-          ...PASS_VARIANTS.map((variant) => ({ variant, turn: held })),
+          // The plain variants at the turn that works, then one look at each other
+          // turn. The inverted ones are for an unusual kind of printing and used to
+          // push a tap to nineteen recognitions, which on a phone is not a button
+          // press any more — they come last, and only if nothing else lands.
+          ...PASS_VARIANTS.filter((variant) => !variant.invert).map((variant) => ({ variant, turn: held })),
           ...TURNS.filter((turn) => turn !== held).map((turn) => ({ variant: PASS_VARIANTS[0]!, turn })),
+          ...PASS_VARIANTS.filter((variant) => variant.invert).map((variant) => ({ variant, turn: held })),
         ]
       : [{ variant: passVariant(tick.current), turn: turnForMisses(misses.current, held) }];
     tick.current += 1;
@@ -652,16 +657,16 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     // Each distinct crop is built once and reused by every variant that wants it.
     const crops = new Map<string, Crop>();
     function cropFor(variant: PassVariant, turn: Turn): Crop {
-      const key = `${variant.wide}:${variant.invert}:${variant.bias}:${turn}`;
+      const key = `${variant.wide}:${variant.invert}:${variant.threshold.window}:${variant.threshold.bias}:${turn}`;
       const existing = crops.get(key);
       if (existing) return existing;
-      const options = { invert: variant.invert, bias: variant.bias, turn };
+      const options = { invert: variant.invert, threshold: variant.threshold, turn };
       /*
-       * Both search regions assume a card standing upright: the lower band of the
-       * frame, and the viewfinder box. Turn the card a quarter and the passcode moves
-       * to the side of the picture, outside either of them — so the band turns with
-       * the card. Taking the whole frame instead would be simpler and worse: it drags
-       * in the artwork, and a foil card's artwork is exactly where a reading drowns.
+       * The band turns with the card: a quarter turn moves the passcode to the side
+       * of the picture, outside a band fixed to the bottom. Two widths, because the
+       * narrow one assumes the card's bottom edge is near the edge of the frame and
+       * that is only true if the card is held right down — so the wide one goes first
+       * and the narrow one follows as the sharper second look.
        */
       /*
        * Two bands rather than a band and the viewfinder box. The box was a sensible
@@ -925,7 +930,7 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
 
           <p className="muted" style={{ fontSize: 12.5, margin: '8px 0 0' }}>
             {auto
-              ? 'Karte für Karte in den Rahmen halten — jede wird automatisch erfasst. Ganze Karte ins Bild: unten die Nummer und der Set-Code, oben der Name für die Rarity.'
+              ? 'Karte für Karte in den Rahmen halten — jede wird automatisch erfasst. Ganze Karte ins Bild: unten die Nummer, rechts überm Textkasten der Set-Code, oben der Name für die Rarity. Bei Folienkarten geht es meist ohne Licht besser — der Reflex überstrahlt genau die Stellen, auf die es ankommt.'
               : 'Ganze Karte aufrecht in den Rahmen legen, dann auf Scannen tippen.'}
           </p>
 
