@@ -13,10 +13,8 @@ import {
   PASS_VARIANTS,
   passVariant,
   pointInFrame,
-  PROBE_AFTER,
   SET_CODE_REGION,
   stepScan,
-  turnForMisses,
   TURNS,
   videoSourceRect,
   type Crop,
@@ -119,31 +117,20 @@ describe('guideBox and regionInGuide', () => {
   const W = 390;
   const H = 520;
 
-  it('puts the outline where the card is asked to go', () => {
+  it('marks the bottom edge of a card, not the whole card', () => {
     const box = guideBox(W, H);
-    expect(box.y).toBeCloseTo(0.05, 6);
-    expect(box.height).toBeCloseTo(0.9, 6);
-    // 90 % of 520 px tall at 59:86 is 321 px wide, centred in 390.
-    expect(box.width * W).toBeCloseTo(0.9 * H * (59 / 86), 1);
-    expect(box.x).toBeCloseTo((1 - box.width) / 2, 6);
-  });
-
-  it('maps the number line onto the bottom of the outline', () => {
-    const line = regionInGuide(PASSCODE_LINE, W, H);
-    const box = guideBox(W, H);
-    expect(line.y).toBeCloseTo(box.y + 0.9 * box.height, 6);
-    expect(line.height).toBeCloseTo(0.1 * box.height, 6);
-    // It ends where the card ends, not where the picture ends.
-    expect(line.y + line.height).toBeCloseTo(0.95, 6);
-    expect(line.y + line.height).toBeLessThan(1);
+    // Wide and flat: a card held close enough to fill this has its number several
+    // times larger than one framed whole, which is what the reading lives on.
+    expect(box.width / box.height).toBeGreaterThan(2);
+    expect(box.y + box.height).toBeLessThan(1);
   });
 
   it('lands on real camera pixels through the cover crop', () => {
-    // 1920x1080 shown in 390x520 with object-fit: cover fills the height, so the
-    // number line's height in camera pixels is the same fraction of 1080.
+    const box = guideBox(W, H);
     const rect = coverSourceRect(1920, 1080, W, H, regionInGuide(PASSCODE_LINE, W, H));
-    expect(rect.sh).toBeCloseTo(0.1 * 0.9 * 1080, 1);
-    expect(rect.sy).toBeCloseTo((0.05 + 0.9 * 0.9) * 1080, 1);
+    // Cover fills the height here, so the box's share of the height carries over.
+    expect(rect.sh).toBeCloseTo(box.height * 1080, 1);
+    expect(rect.sy).toBeCloseTo(box.y * 1080, 1);
   });
 
   it('survives a viewfinder that has not been laid out yet', () => {
@@ -225,35 +212,6 @@ describe('adaptiveThreshold', () => {
     const grey = emptySurface(40, 40);
     const out = adaptiveThreshold(grey, 40, 40, { bias: 1.02, minContrast: 0 });
     expect(out.some((value) => value === 0)).toBe(true);
-  });
-});
-
-describe('turnForMisses', () => {
-  it('keeps using the turn that last worked', () => {
-    for (let misses = 0; misses < PROBE_AFTER; misses += 1) {
-      expect(turnForMisses(misses, 90)).toBe(90);
-    }
-  });
-
-  it('starts looking elsewhere once nothing is coming back', () => {
-    expect(turnForMisses(PROBE_AFTER, 0)).not.toBe(0);
-  });
-
-  it('gets round every turn, so a stack put down any way is found', () => {
-    const seen = new Set<Turn>();
-    for (let misses = 0; misses < PROBE_AFTER * TURNS.length * 2; misses += 1) {
-      seen.add(turnForMisses(misses, 0));
-    }
-    expect([...seen].sort((a, b) => a - b)).toEqual([...TURNS].sort((a, b) => a - b));
-  });
-
-  it('comes back to the preferred turn on the way round', () => {
-    // Whatever is preferred is part of the cycle, not skipped.
-    const seen = new Set<Turn>();
-    for (let misses = 0; misses < PROBE_AFTER * TURNS.length; misses += 1) {
-      seen.add(turnForMisses(misses, 270));
-    }
-    expect(seen.has(270)).toBe(true);
   });
 });
 
