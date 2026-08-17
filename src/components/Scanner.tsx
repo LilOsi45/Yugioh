@@ -50,6 +50,7 @@ import {
   type CardFrame,
 } from '../lib/cardGeometry';
 import { combineLooks, decideRarity, measureLook, type Look, type RarityDecision } from '../lib/rarity';
+import { copyText } from '../lib/tradeText';
 import { displayName } from '../lib/dataset';
 import { cardmarketUrl } from '../lib/market';
 import { formatEuro } from '../lib/pricing';
@@ -961,16 +962,46 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
             const match = matchPasscode(reading.text, db, { repair: true });
             if (!match) continue;
 
+            /*
+             * A photograph holds the whole card, name and artwork included — so unlike
+             * the close-up live scan, the rarity can be measured here. The passcode's
+             * own line gives the card's angle and rough size, the set code sharpens it.
+             */
+            const word = passcodeWord(reading.words);
+            const passcodeAt = word ? wordCentre(word, crop) : null;
+            const line = word ? lineOf(reading, word) : null;
+            let geometry: CardFrame | null = null;
+            if (word && passcodeAt && line) {
+              const from = pointInFrame({ x: line.baseline.x0, y: line.baseline.y0 }, crop);
+              const to = pointInFrame({ x: line.baseline.x1, y: line.baseline.y1 }, crop);
+              geometry = cardFrameFromLine(
+                passcodeAt,
+                { x0: from.x, y0: from.y, x1: to.x, y1: to.y },
+                line.rowHeight / crop.scale,
+              );
+            }
+
             let setCode: string | null = null;
+            let setAt: { x: number; y: number } | null = null;
             try {
-              const found = await readSetCode(frame, crop, match.card, scanner, null, turn);
+              const found = await readSetCode(frame, crop, match.card, scanner, geometry, turn);
               setCode = found?.code ?? null;
+              setAt = found?.at ?? null;
             } catch {
               // A missing set code is a detail, not a failed scan.
             }
+
+            let decision: RarityDecision | null = null;
+            try {
+              const sharp = geometry && passcodeAt && setAt ? refineScale(geometry, passcodeAt, setAt) : null;
+              decision = await measureRarity(frame.image as HTMLVideoElement, frame, sharp, raritiesIn(match.card, setCode));
+            } catch {
+              // Same rule: a detail that failed, not a failed scan.
+            }
+
             memory.current = NO_MEMORY;
             setReading(null);
-            record({ card: match.card, setCode }, match.exact);
+            record({ card: match.card, setCode }, match.exact, decision);
             return;
           }
           }
@@ -1116,6 +1147,26 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
             </button>
             <button onClick={() => setDetectRarity((value) => !value)}>
               {detectRarity ? 'Rarity-Erkennung aus' : 'Rarity-Erkennung an'}
+            </button>
+            <button
+              onClick={() => {
+                const track = stream.current?.getVideoTracks()[0];
+                const settings = track?.getSettings?.() ?? {};
+                const lines = [
+                  `Erkenner: ${engine}, Kamera: ${status}`,
+                  `Video: ${video.current?.videoWidth ?? 0}x${video.current?.videoHeight ?? 0}, angefragt ${settings.width ?? '?'}x${settings.height ?? '?'}`,
+                  `Bilder geprüft: ${checked}, erfasst: ${counted}`,
+                  `Zuletzt gelesen: ${reading ?? '—'}`,
+                  `Set-Zeile: ${setReadingText ?? '—'}`,
+                  `Meldung: ${feedback ?? '—'}`,
+                  navigator.userAgent,
+                ];
+                void copyText(lines.join('\n')).then((ok) =>
+                  setFeedback(ok ? 'Diagnose kopiert — einfach einfügen und schicken.' : lines.join(' · ')),
+                );
+              }}
+            >
+              Diagnose kopieren
             </button>
             <button onClick={finish}>Fertig</button>
           </div>
