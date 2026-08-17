@@ -394,13 +394,16 @@ export interface PassVariant {
 /**
  * Every combination worth trying, most likely first.
  *
- * A tap works through the whole list; the continuous scan takes one per tick. The
- * whole frame comes first: the viewfinder now outlines the entire card, so the number
- * usually sits outside the middle strip the box shows. The sharper box crop follows
- * for cards held close, and inversion last because it only helps light-on-dark print.
+ * A tap works through the whole list; the continuous scan takes one per tick.
+ *
+ * `wide` picks between the two ways of finding the number. The outline goes first:
+ * it knows where the card is because that is where the card was asked to be, and the
+ * strip it cuts holds the number line and nothing else. The band of the picture
+ * follows for a card that is not in the outline. Inversion is last, because it only
+ * helps the rare light-on-dark print.
  */
 export const PASS_VARIANTS: PassVariant[] = [false, true].flatMap((invert) =>
-  [true, false].flatMap((wide) =>
+  [false, true].flatMap((wide) =>
     THRESHOLD_PASSES.flatMap((threshold) => OCR_MODES.map((mode) => ({ wide, invert, threshold, mode }))),
   ),
 );
@@ -546,16 +549,52 @@ export interface Rect {
 }
 
 /**
- * A generous window over the lower part of the view: the passcode sits on the
- * bottom edge of a card, below the effect text.
+ * The card outline drawn on the viewfinder, in fractions of the element.
  *
- * An earlier version used a thin band across the middle, which asked the user to
- * place one small number precisely and, in testing, never contained the passcode at
- * all. A large window only asks that the bottom of the card is in the bottom of the
- * frame, and the extra text it picks up is harmless — every reading is checked
- * against the card index anyway.
+ * This is the one thing about the card's position that is not guessed: the outline
+ * asks for the card, and the card is put there. Three attempts went into working out
+ * where the card might be — a band at the bottom of the frame, the height of the
+ * passcode's row, the quarter turn it lies at — and all three were guesses. This is
+ * an agreement instead.
+ *
+ * Kept here rather than in the stylesheet because the outline on screen and the strip
+ * handed to the engine have to be the *same* rectangle. Twice now they have drifted
+ * apart, and both times the scanner read a part of the picture the user was not aiming
+ * at.
  */
-export const PASSCODE_REGION: Rect = { x: 0.05, y: 0.55, width: 0.9, height: 0.42 };
+export const GUIDE_MARGIN = 0.05;
+export const GUIDE_ASPECT = 59 / 86;
+
+/** Where the outline sits, given how wide and tall the element is on screen. */
+export function guideBox(elementWidth: number, elementHeight: number): Rect {
+  if (elementWidth <= 0 || elementHeight <= 0) return { x: 0, y: 0, width: 1, height: 1 };
+  const height = 1 - 2 * GUIDE_MARGIN;
+  const width = Math.min(1, (height * elementHeight * GUIDE_ASPECT) / elementWidth);
+  return { x: (1 - width) / 2, y: GUIDE_MARGIN, width, height };
+}
+
+/**
+ * A rectangle given in *card* fractions, mapped into fractions of the element.
+ *
+ * With this, a crop can be asked for the way a person would describe it — "the bottom
+ * eighth of the card", "the right hand side just above the text box" — and it lands
+ * where that is on screen, whatever size the viewfinder happens to be.
+ */
+export function regionInGuide(region: Rect, elementWidth: number, elementHeight: number): Rect {
+  const box = guideBox(elementWidth, elementHeight);
+  return {
+    x: box.x + region.x * box.width,
+    y: box.y + region.y * box.height,
+    width: region.width * box.width,
+    height: region.height * box.height,
+  };
+}
+
+/** The number line along the bottom edge of a card — and not the text box above it. */
+export const PASSCODE_LINE: Rect = { x: 0, y: 0.9, width: 1, height: 0.1 };
+
+/** The set code: right hand side, in the gap between artwork and text box. */
+export const SET_CODE_LINE: Rect = { x: 0.45, y: 0.58, width: 0.55, height: 0.14 };
 
 /**
  * Maps a rectangle expressed in fractions of the *displayed* element onto pixels of
@@ -840,20 +879,34 @@ export function cropVideoRegion(
   return drawCrop(frame, videoSourceRect(frame.width, frame.height, region), { invert, scale, turn, threshold });
 }
 
-export function cropRegion(
-  frame: Frame,
-  region: Rect = PASSCODE_REGION,
-  options: CropOptions = {},
-): Crop {
+/**
+ * Crops a region of the *card*, using the outline as its address.
+ *
+ * The one crop that does not guess where the card is. Everything else here searches a
+ * band of the picture and hopes the card's edge is near it; this asks the outline,
+ * which is where the card was put.
+ */
+export function cropGuide(frame: Frame, region: Rect, options: CropOptions = {}): Crop {
   const { invert = false, scale = 4, threshold, turn = 0 } = options;
   const rect = coverSourceRect(
     frame.width,
     frame.height,
     frame.elementWidth,
     frame.elementHeight,
-    region,
+    regionInGuide(region, frame.elementWidth, frame.elementHeight),
   );
   return drawCrop(frame, rect, { invert, scale, turn, threshold });
+}
+
+/** The whole card as the outline places it, in camera pixels. */
+export function guideSourceRect(frame: Frame): { sx: number; sy: number; sw: number; sh: number } {
+  return coverSourceRect(
+    frame.width,
+    frame.height,
+    frame.elementWidth,
+    frame.elementHeight,
+    guideBox(frame.elementWidth, frame.elementHeight),
+  );
 }
 
 /**

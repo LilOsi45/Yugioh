@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   captureFrame,
   createScanner,
+  cropGuide,
   cropPixels,
   cropVideoRegion,
   extractSetCode,
@@ -9,8 +10,11 @@ import {
   NO_MEMORY,
   PASS_VARIANTS,
   passcodeBand,
+  PASSCODE_LINE,
+  SET_CODE_LINE,
+  guideSourceRect,
+  guideBox,
   SET_CODE_SPAN,
-  TIGHT_BAND,
   WIDE_BAND,
   passVariant,
   pointInFrame,
@@ -519,6 +523,9 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
      * what catches the code when it is not.
      */
     const wide = cropVideoRegion(frame, passcodeBand(turn, SET_CODE_SPAN), { turn, scale: 3 });
+    // Where the code is on the card, addressed through the outline — the same trick
+    // that finds the number, and it needs no geometry to have been guessed right.
+    const framed = cropGuide(frame, SET_CODE_LINE, { scale: 4 });
     /*
      * The card's own lower band comes first when the geometry is known. It covers both
      * places a card can print its set code — under the artwork, or on the bottom line
@@ -537,6 +544,8 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
       : [];
     const readings: string[] = [];
     for (const [crop, mode] of [
+      [framed, SET_CODE_MODE] as const,
+      [framed, SET_CODE_SPARSE_MODE] as const,
       ...bands.flatMap((band: Crop) => [[band, SET_CODE_MODE] as const, [band, SET_CODE_SPARSE_MODE] as const]),
       [wide, SET_CODE_MODE],
       [wide, SET_CODE_SPARSE_MODE],
@@ -674,10 +683,16 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
        * the whole card, what it frames is mostly artwork. A narrow strip along the
        * card's bottom edge and a wider fallback do the same job without that.
        */
-      const crop = cropVideoRegion(frame, passcodeBand(turn, variant.wide ? WIDE_BAND : TIGHT_BAND), {
-        ...options,
-        scale: variant.wide ? 2 : 3,
-      });
+      /*
+       * The outline first, the picture second. Cutting the card's own bottom edge out
+       * of the outline gives the number line and nothing else — where a band of the
+       * picture either lands below the card or brings the whole effect text with it.
+       * A real reading came back as `328154153381140`: fifteen digits of effect text,
+       * with the number nowhere in them.
+       */
+      const crop = variant.wide
+        ? cropVideoRegion(frame, passcodeBand(turn, WIDE_BAND), { ...options, scale: 2 })
+        : cropGuide(frame, PASSCODE_LINE, { ...options, scale: 4 });
       crops.set(key, crop);
       return crop;
     }
@@ -721,8 +736,19 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
       const word = passcodeWord(reading.words);
       const passcodeAt = word ? wordCentre(word, crop) : null;
       const line = word ? lineOf(reading, word) : null;
-      let geometry: CardFrame | null = null;
-      if (word && passcodeAt && line) {
+      /*
+       * The outline is the card, so it is the card frame — no row height to estimate
+       * and no second anchor to find. The estimate below stays for a card that was
+       * read from the picture instead.
+       */
+      const box = guideSourceRect(frame);
+      let geometry: CardFrame | null =
+        box.sw > 0 && box.sh > 0
+          ? { origin: { x: box.sx, y: box.sy }, right: { x: box.sw, y: 0 }, down: { x: 0, y: box.sh } }
+          : null;
+      if (!variant.wide && geometry) {
+        // Read through the outline: trust it and skip the estimate entirely.
+      } else if (word && passcodeAt && line) {
         const from = pointInFrame({ x: line.baseline.x0, y: line.baseline.y0 }, crop);
         const to = pointInFrame({ x: line.baseline.x1, y: line.baseline.y1 }, crop);
         geometry = cardFrameFromLine(
@@ -744,8 +770,11 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
 
       // The set code across the card is a far longer lever than a row height, so it
       // is what the measurement's aim finally rests on.
-      const sharp =
-        geometry && passcodeAt && found?.at ? refineScale(geometry, passcodeAt, found.at) : null;
+      const sharp = !variant.wide
+        ? geometry
+        : geometry && passcodeAt && found?.at
+          ? refineScale(geometry, passcodeAt, found.at)
+          : null;
 
       let decision: RarityDecision | null = null;
       try {
@@ -886,6 +915,19 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     if (counted > 0) onSummary?.(`${counted} Karten erfasst · ${formatEuro(cents)}`);
     onClose();
   }
+  /*
+   * The outline is drawn from the same rectangle the crops are cut from, so the two
+   * cannot drift apart. They did twice, and both times the scanner was reading a part
+   * of the picture the user was not aiming at.
+   */
+  const box = guideBox(video.current?.clientWidth ?? 0, video.current?.clientHeight ?? 0);
+  const outline = {
+    left: `${box.x * 100}%`,
+    top: `${box.y * 100}%`,
+    width: `${box.width * 100}%`,
+    height: `${box.height * 100}%`,
+  };
+
   const engineLine =
     engine === 'loading'
       ? 'Texterkennung wird geladen…'
@@ -922,10 +964,7 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
                 corner from the passcode, and the rarity is read off the name and the
                 artwork. Everything the scanner needs is inside this outline — and it
                 lies the way the cards do, so it is an instruction and not a puzzle. */}
-            <div
-              className="scanguide"
-              style={turnSeen === 90 || turnSeen === 270 ? { aspectRatio: '86 / 59' } : undefined}
-            />
+            <div className="scanguide" style={outline} />
           </div>
 
           <p className="muted" style={{ fontSize: 12.5, margin: '8px 0 0' }}>
