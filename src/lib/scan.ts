@@ -887,6 +887,33 @@ function drawCrop(
   return { canvas, sx: rect.sx, sy: rect.sy, sw: rect.sw, sh: rect.sh, scale, turn };
 }
 
+/**
+ * A small grey copy of the whole frame, for finding the card in it.
+ *
+ * Small on purpose: the card's outline survives being shrunk to a couple of hundred
+ * pixels, and at that size the search costs a fraction of a millisecond. It is the
+ * lesson from the nine megapixel crops — do the cheap thing on a thumbnail, and spend
+ * the pixels only where the text actually is.
+ */
+export function frameGrey(frame: Frame, maxSide = 200): { data: Float64Array; width: number; height: number } {
+  const scale = Math.min(1, maxSide / Math.max(1, frame.width, frame.height));
+  const width = Math.max(1, Math.round(frame.width * scale));
+  const height = Math.max(1, Math.round(frame.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  const data = new Float64Array(width * height);
+  if (!context) return { data, width, height };
+  context.imageSmoothingQuality = 'low';
+  context.drawImage(frame.image, 0, 0, frame.width, frame.height, 0, 0, width, height);
+  const pixels = context.getImageData(0, 0, width, height).data;
+  for (let i = 0; i < data.length; i += 1) {
+    data[i] = 0.299 * pixels[i * 4]! + 0.587 * pixels[i * 4 + 1]! + 0.114 * pixels[i * 4 + 2]!;
+  }
+  return { data, width, height };
+}
+
 /** Crop a rectangle given straight in frame pixels. */
 export function cropPixels(
   frame: Frame,
@@ -930,6 +957,34 @@ export function cropGuide(frame: Frame, region: Rect, options: CropOptions = {})
     regionInGuide(region, frame.elementWidth, frame.elementHeight),
   );
   return drawCrop(frame, rect, { invert, scale, turn, threshold });
+}
+
+/**
+ * The other direction: a rectangle in fractions of the *camera frame*, put back onto
+ * fractions of the element, so something found in the picture can be drawn on screen.
+ *
+ * `object-fit: cover` hides part of the frame, so the two are not the same fractions —
+ * and the search deliberately runs on the whole frame, including the parts the
+ * viewfinder is not showing. Without this the box marking the found card would sit
+ * beside the card rather than on it.
+ */
+export function frameRectOnElement(
+  videoWidth: number,
+  videoHeight: number,
+  elementWidth: number,
+  elementHeight: number,
+  rect: Rect,
+): Rect {
+  if (videoWidth <= 0 || videoHeight <= 0 || elementWidth <= 0 || elementHeight <= 0) return rect;
+  const scale = Math.max(elementWidth / videoWidth, elementHeight / videoHeight);
+  const offsetX = (videoWidth * scale - elementWidth) / 2;
+  const offsetY = (videoHeight * scale - elementHeight) / 2;
+  return {
+    x: (rect.x * videoWidth * scale - offsetX) / elementWidth,
+    y: (rect.y * videoHeight * scale - offsetY) / elementHeight,
+    width: (rect.width * videoWidth * scale) / elementWidth,
+    height: (rect.height * videoHeight * scale) / elementHeight,
+  };
 }
 
 /** The whole card as the outline places it, in camera pixels. */
