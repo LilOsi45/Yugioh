@@ -1220,8 +1220,8 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
 
           <p className="muted" style={{ fontSize: 12.5, margin: '8px 0 0' }}>
             {auto
-              ? 'Ganze Karte ins Bild, ruhig halten. Der grüne Rahmen zeigt, dass die Karte gefunden wurde — dann stimmen Nummer, Set und Rarity.'
-              : 'Ganze Karte ins Bild, dann tippen. Der grüne Rahmen zeigt, dass die Karte gefunden wurde.'}
+              ? 'Ganze Karte ins Bild, ruhig halten. Der grüne Rahmen zeigt, dass die Karte gefunden wurde — dann stimmen Nummer, Set und Rarity. „Foto aufnehmen" ist noch schärfer und läuft nebenher.'
+              : 'Ganze Karte ins Bild, dann tippen. Der grüne Rahmen zeigt, dass die Karte gefunden wurde. „Foto aufnehmen" ist der schärfste Weg.'}
           </p>
 
           <div className="row">
