@@ -112,7 +112,7 @@ const SCAN_INTERVAL_MS = 700;
 /** How often the loop looks for work when continuous scanning is off. */
 const IDLE_INTERVAL_MS = 250;
 /** A single attempt taking longer than this is worth saying out loud. */
-const SLOW_PASS_MS = 15000;
+const SLOW_PASS_MS = 25000;
 /** Width of the on-screen copy of what the engine is being given. */
 const PREVIEW_WIDTH = 320;
 
@@ -130,7 +130,7 @@ const RARITY_GAP_MS = 70;
  * megapixels; past this the extra pixels cost seconds and add nothing, because the
  * digits are already several times taller than the engine needs.
  */
-const PHOTO_WIDTH = 2400;
+const PHOTO_WIDTH = 1800;
 
 /**
  * Where to look in a photograph, in order. The bottom third first — that is where the
@@ -138,7 +138,7 @@ const PHOTO_WIDTH = 2400;
  * whole picture, which finds it wherever it ended up.
  */
 const PHOTO_REGIONS: Rect[] = [
-  { x: 0, y: 0.6, width: 1, height: 0.4 },
+  { x: 0, y: 0.55, width: 1, height: 0.45 },
   { x: 0, y: 0, width: 1, height: 1 },
 ];
 
