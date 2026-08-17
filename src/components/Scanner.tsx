@@ -23,7 +23,6 @@ import {
   SET_CODE_MODE,
   SET_CODE_SPARSE_MODE,
   stepScan,
-  turnForMisses,
   TURNS,
   wordCentre,
   type Crop,
@@ -175,6 +174,7 @@ function setCodeWord(words: WordBox[], code: string): WordBox | null {
  * and turns a dead scanner into a working one.
  */
 const CONSTRAINTS: MediaStreamConstraints[] = [
+  { video: { facingMode: { ideal: 'environment' }, width: { ideal: 2560 } } },
   { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 } } },
   { video: { facingMode: 'environment' } },
   { video: true },
@@ -258,9 +258,13 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
   soundRef.current = sound;
   const detectRarityRef = useRef(detectRarity);
   detectRarityRef.current = detectRarity;
-  /** Which way the cards lie, and how long nothing has been found at that turn. */
-  const preferredTurn = useRef<Turn>(0);
-  const misses = useRef(0);
+  /**
+   * Which way the cards lie. Set by hand rather than searched for: hunting through all
+   * four quarter turns spent three of every four attempts on a turn that could not
+   * work, and flipped the preview on every tick — which looks like a fault and is one.
+   */
+  const turnRef = useRef<Turn>(0);
+  turnRef.current = turnSeen;
   const sessionRarityRef = useRef(sessionRarity);
   sessionRarityRef.current = sessionRarity;
   /** One audio context for the whole session; creating one per beep is wasteful. */
@@ -640,7 +644,7 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
      * one look at each other turn. The continuous loop takes one combination per tick
      * and lets `turnForMisses` decide when to start looking at other turns.
      */
-    const held = preferredTurn.current;
+    const held = turnRef.current;
     const attempts: { variant: PassVariant; turn: Turn }[] = manual
       ? [
           // The plain variants at the turn that works, then one look at each other
@@ -648,10 +652,9 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
           // push a tap to nineteen recognitions, which on a phone is not a button
           // press any more — they come last, and only if nothing else lands.
           ...PASS_VARIANTS.filter((variant) => !variant.invert).map((variant) => ({ variant, turn: held })),
-          ...TURNS.filter((turn) => turn !== held).map((turn) => ({ variant: PASS_VARIANTS[0]!, turn })),
           ...PASS_VARIANTS.filter((variant) => variant.invert).map((variant) => ({ variant, turn: held })),
         ]
-      : [{ variant: passVariant(tick.current), turn: turnForMisses(misses.current, held) }];
+      : [{ variant: passVariant(tick.current), turn: held }];
     tick.current += 1;
 
     /*
@@ -723,11 +726,6 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
         return;
       }
 
-      // This turn works for this pile; try it first from now on.
-      preferredTurn.current = turn;
-      misses.current = 0;
-      setTurnSeen(turn);
-
       /*
        * Where the passcode was read, and at what angle, puts the whole card on the
        * map: its line's baseline is the card's own horizontal, and the row height is
@@ -788,7 +786,6 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
       return;
     }
 
-    misses.current += 1;
 
     // Nothing in view: that is what tells the scanner the next card is a new one.
     memory.current = stepScan(memory.current, null, Date.now()).memory;
@@ -969,8 +966,8 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
 
           <p className="muted" style={{ fontSize: 12.5, margin: '8px 0 0' }}>
             {auto
-              ? 'Karte für Karte in den Rahmen halten — jede wird automatisch erfasst. Ganze Karte ins Bild: unten die Nummer, rechts überm Textkasten der Set-Code, oben der Name für die Rarity. Bei Folienkarten geht es meist ohne Licht besser — der Reflex überstrahlt genau die Stellen, auf die es ankommt.'
-              : 'Ganze Karte aufrecht in den Rahmen legen, dann auf Scannen tippen.'}
+              ? 'Untere Kartenkante in den Kasten — nah ran, bis die achtstellige Nummer den Kasten fast ausfüllt. Je größer sie im Bild ist, desto sicherer wird sie gelesen. Bei Folienkarten meist ohne Licht besser.'
+              : 'Untere Kartenkante nah in den Kasten halten, dann auf Scannen tippen.'}
           </p>
 
           <div className="row">
@@ -980,6 +977,9 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
             <button onClick={() => setAuto((value) => !value)}>{auto ? 'Auto-Scan aus' : 'Auto-Scan an'}</button>
             {torchAvailable && <button onClick={toggleTorch}>{torch ? 'Licht aus' : 'Licht an'}</button>}
             <button onClick={() => setSound((value) => !value)}>{sound ? 'Ton aus' : 'Ton an'}</button>
+            <button onClick={() => setTurnSeen((value) => TURNS[(TURNS.indexOf(value) + 1) % TURNS.length]!)}>
+              {turnSeen === 0 ? 'Karte liegt quer?' : `Quer: ${turnSeen}°`}
+            </button>
             <button onClick={() => setDetectRarity((value) => !value)}>
               {detectRarity ? 'Rarity-Erkennung aus' : 'Rarity-Erkennung an'}
             </button>
@@ -988,22 +988,6 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
 
           {/* Quarter-turned cards are unreadable to the engine until the crop is
               turned with them, so which way they lie is worth stating. */}
-          {turnSeen !== 0 && (
-            <div className="notice" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <span style={{ flex: 1 }}>Karten liegen quer ({turnSeen}°) — wird mitgedreht gelesen</span>
-              <button
-                className="link"
-                onClick={() => {
-                  preferredTurn.current = 0;
-                  misses.current = 0;
-                  setTurnSeen(0);
-                }}
-              >
-                zurücksetzen
-              </button>
-            </div>
-          )}
-
           {/* A rarity collection is one rarity from front to back; saying so once
               saves the rest of the taps. */}
           {sessionRarity && (

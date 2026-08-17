@@ -562,15 +562,24 @@ export interface Rect {
  * apart, and both times the scanner read a part of the picture the user was not aiming
  * at.
  */
-export const GUIDE_MARGIN = 0.05;
-export const GUIDE_ASPECT = 59 / 86;
+export const GUIDE_BOX: Rect = { x: 0.04, y: 0.6, width: 0.92, height: 0.22 };
 
-/** Where the outline sits, given how wide and tall the element is on screen. */
+/**
+ * Where the outline sits — a wide, flat box for the *bottom edge* of a card, not the
+ * whole card.
+ *
+ * This was the whole card for a while, so the rarity could be measured from the name
+ * and the artwork. It cost the thing the scanner exists for. A card that fills the
+ * viewfinder puts its eight digit number at about sixteen pixels tall on a 1080 line
+ * camera, and text recognition wants twice that; upscaling adds no information that
+ * the lens did not capture. Held close enough to fill this box, the same digits are
+ * several times bigger and read in seconds.
+ *
+ * The rarity gives way, because a card that is not read at all has no rarity either.
+ */
 export function guideBox(elementWidth: number, elementHeight: number): Rect {
   if (elementWidth <= 0 || elementHeight <= 0) return { x: 0, y: 0, width: 1, height: 1 };
-  const height = 1 - 2 * GUIDE_MARGIN;
-  const width = Math.min(1, (height * elementHeight * GUIDE_ASPECT) / elementWidth);
-  return { x: (1 - width) / 2, y: GUIDE_MARGIN, width, height };
+  return GUIDE_BOX;
 }
 
 /**
@@ -590,11 +599,14 @@ export function regionInGuide(region: Rect, elementWidth: number, elementHeight:
   };
 }
 
-/** The number line along the bottom edge of a card — and not the text box above it. */
-export const PASSCODE_LINE: Rect = { x: 0, y: 0.9, width: 1, height: 0.1 };
-
-/** The set code: right hand side, in the gap between artwork and text box. */
-export const SET_CODE_LINE: Rect = { x: 0.45, y: 0.58, width: 0.55, height: 0.14 };
+/**
+ * What to read out of the box, in fractions of the box itself.
+ *
+ * The box is held on the card's bottom edge, so everything wanted is inside it: the
+ * number on the left of the last line, the set code above and to the right.
+ */
+export const PASSCODE_LINE: Rect = { x: 0, y: 0, width: 1, height: 1 };
+export const SET_CODE_LINE: Rect = { x: 0.3, y: 0, width: 0.7, height: 1 };
 
 /**
  * Maps a rectangle expressed in fractions of the *displayed* element onto pixels of
@@ -744,24 +756,7 @@ export type Turn = 0 | 90 | 180 | 270;
 /** Tried in this order, starting from whichever turn last worked. */
 export const TURNS: Turn[] = [0, 90, 270, 180];
 
-/** Misses at one turn before the next is given a go. */
-export const PROBE_AFTER = 2;
 
-/**
- * Which turn to try, given how many attempts in a row have found nothing.
- *
- * The turn is a property of how the cards are being handled, not of the card: someone
- * working through a stack puts them down the same way every time. So the last turn
- * that worked is tried first and keeps being tried, and only a run of misses starts
- * looking elsewhere — which means the search costs something once per session rather
- * than once per card.
- */
-export function turnForMisses(misses: number, preferred: Turn): Turn {
-  if (misses < PROBE_AFTER) return preferred;
-  const from = Math.max(0, TURNS.indexOf(preferred));
-  const step = Math.floor(misses / PROBE_AFTER) % TURNS.length;
-  return TURNS[(from + step) % TURNS.length]!;
-}
 
 /** A crop, together with what it would take to find a point in it again in the frame. */
 export interface Crop {
