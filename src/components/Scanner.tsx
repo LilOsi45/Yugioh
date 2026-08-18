@@ -99,6 +99,20 @@ function raritiesIn(card: Card, setCode: string | null): string[] {
   return [...found].sort();
 }
 
+/**
+ * Fills in the session's set where none was read — and only where it can be true.
+ *
+ * The check is the point: a card that was never printed in that set keeps whatever it
+ * had. A wrong set is worse than no set, because it books the card under a printing
+ * the user does not own and nothing later would question it.
+ */
+export function withSessionSet(result: ScanResult, held: string | null): ScanResult {
+  if (result.setCode || !held) return result;
+  return result.card.printings.some((printing) => printing.set.code === held)
+    ? { ...result, setCode: held }
+    : result;
+}
+
 interface Props {
   db: Database;
   /** Return value decides the feedback line: what the app did with the card. */
@@ -263,6 +277,19 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
   const [turnSeen, setTurnSeen] = useState<Turn>(0);
   /** Held for the whole session once chosen: a rarity collection is all one rarity. */
   const [sessionRarity, setSessionRarity] = useState<string | null>(null);
+  /*
+   * The set every card of this session belongs to.
+   *
+   * Measured on the device: reading the printed set code from the live picture works
+   * only sometimes, because it is printed at about a third the height of the number
+   * and a phone's preview stream does not resolve it. A binder does not need it read
+   * card by card — it is one set from front to back. Said once, every card of the
+   * stack gets it, and the rarity usually follows from it without a tap.
+   *
+   * Only applied where it can be true: the card must actually have a printing in that
+   * set. A card from elsewhere in the stack keeps whatever was read for it.
+   */
+  const [sessionSet, setSessionSet] = useState<string | null>(null);
   /* Proof of life: without these the scanner looks identical whether it is
      searching or dead, which is exactly how the last version failed. */
   const [checked, setChecked] = useState(0);
@@ -307,6 +334,8 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
   turnRef.current = turnSeen;
   const sessionRarityRef = useRef(sessionRarity);
   sessionRarityRef.current = sessionRarity;
+  const sessionSetRef = useRef(sessionSet);
+  sessionSetRef.current = sessionSet;
   /** One audio context for the whole session; creating one per beep is wasteful. */
   const audio = useRef<AudioContext | null>(null);
 
@@ -446,7 +475,11 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
    * there is nothing to ask; the session was told to stick to one rarity; the camera
    * measured it. Anything left over is asked, as chips.
    */
-  function record(result: ScanResult, exact = true, decision?: RarityDecision | null) {
+  function record(input: ScanResult, exact = true, decision?: RarityDecision | null) {
+    // The session's set fills in only what was not read, and only where the card was
+    // really printed — a wrong set is worse than none, because it silently books the
+    // card under a printing the user does not own.
+    const result = withSessionSet(input, sessionSetRef.current);
     const choices = raritiesIn(result.card, result.setCode);
     const held = sessionRarityRef.current;
     let rarity = result.rarity ?? null;
@@ -1359,6 +1392,7 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
                   `Video: ${video.current?.videoWidth ?? 0}x${video.current?.videoHeight ?? 0}, angefragt ${settings.width ?? '?'}x${settings.height ?? '?'}`,
                   `Bilder geprüft: ${checked}, erfasst: ${counted}`,
                   `Zuletzt gelesen: ${reading ?? '—'}`,
+                  `Sitzung: Set ${sessionSet ?? '—'}, Rarity ${sessionRarity ?? '—'}`,
                   `Zuletzt erfasst: ${
                     entries[0]
                       ? `${displayName(entries[0].result.card)} · ${entries[0].result.setCode ?? 'kein Set'} · ${entries[0].result.rarity ?? 'keine Rarity'}`
@@ -1386,6 +1420,17 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
             <div className="notice" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <span style={{ flex: 1 }}>Alle Karten dieser Sitzung: {sessionRarity}</span>
               <button className="link" onClick={() => setSessionRarity(null)}>
+                aufheben
+              </button>
+            </div>
+          )}
+
+          {/* One binder is one set, and the live picture cannot read the set code
+              reliably. Saying it once covers the whole stack. */}
+          {sessionSet && (
+            <div className="notice" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span style={{ flex: 1 }}>Alle Karten dieser Sitzung aus: {sessionSet}</span>
+              <button className="link" onClick={() => setSessionSet(null)}>
                 aufheben
               </button>
             </div>
@@ -1499,7 +1544,12 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
                         ))}
                         {entry.result.rarity && entry.result.rarity !== sessionRarity && (
                           <button className="chip" onClick={() => setSessionRarity(entry.result.rarity ?? null)}>
-                            merken
+                            Rarity merken
+                          </button>
+                        )}
+                        {entry.result.setCode && entry.result.setCode !== sessionSet && (
+                          <button className="chip" onClick={() => setSessionSet(entry.result.setCode)}>
+                            Set merken
                           </button>
                         )}
                         {/* The prices per rarity are not in our data — see
