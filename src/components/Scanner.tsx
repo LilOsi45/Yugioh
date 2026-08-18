@@ -129,11 +129,18 @@ const RARITY_SAMPLES = 3;
 const RARITY_GAP_MS = 70;
 
 /**
- * How wide a photograph is scaled to before reading. A phone hands over twelve
- * megapixels; past this the extra pixels cost seconds and add nothing, because the
- * digits are already several times taller than the engine needs.
+ * How wide a photograph is scaled to before reading.
+ *
+ * This was 1800, on the argument that the eight digit number is already far bigger
+ * than the engine needs. True of the number, and wrong about the card: the set code
+ * is printed at about a third the height, and 1800 is exactly where it stops being
+ * legible. That is the whole of `Set-Zeile: Set nicht erkannt in: C SE LW 4 ENTRANT`
+ * — letters, in the right place, too small to be letters any more.
+ *
+ * A phone photo is 12 megapixels. Keeping most of them costs a little memory and buys
+ * the one piece of text the live camera can never deliver.
  */
-const PHOTO_WIDTH = 1800;
+const PHOTO_WIDTH = 2800;
 
 /**
  * Where to look in a photograph, in order. The bottom third first — that is where the
@@ -237,6 +244,7 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
   const ocr = useRef<OcrScanner | null>(null);
   /** The phone's own camera app, which focuses and gives back the full sensor. */
   const photo = useRef<HTMLInputElement>(null);
+  const album = useRef<HTMLInputElement>(null);
 
   const [status, setStatus] = useState<Status>('starting');
   const [engine, setEngine] = useState<Engine>('loading');
@@ -650,14 +658,22 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
       return null;
     }
 
+    /*
+     * Several looks only make sense at a running camera, where foil flashes as the
+     * hand moves. A photograph is one moment and stays that moment — and asking the
+     * still for a second frame produced an empty picture whose pixels could not be
+     * read at all, which threw, which silently cost every photographed card its
+     * rarity.
+     */
+    const live = source instanceof HTMLVideoElement && source.videoWidth > 0;
     const looks: Look[] = [];
-    for (let sample = 0; sample < RARITY_SAMPLES; sample += 1) {
-      const shot = sample === 0 ? frame : captureFrame(source);
+    for (let sample = 0; sample < (live ? RARITY_SAMPLES : 1); sample += 1) {
+      const shot = sample === 0 || !live ? frame : captureFrame(source);
       const name = samplePixels(shot, boundingBoxOnCard(card, NAME_REGION));
       const art = samplePatch(shot, boundingBoxOnCard(card, ART_REGION));
       const textbox = samplePixels(shot, boundingBoxOnCard(card, TEXTBOX_REGION));
       if (name && art && textbox) looks.push(measureLook(name, art, textbox));
-      if (sample < RARITY_SAMPLES - 1) await wait(RARITY_GAP_MS);
+      if (live && sample < RARITY_SAMPLES - 1) await wait(RARITY_GAP_MS);
     }
     if (looks.length === 0) return null;
     const decision = decideRarity(candidates, combineLooks(looks));
@@ -978,6 +994,23 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
    * geometry: the whole picture is searched, and whatever eight digit run matches a
    * real card wins.
    */
+  /**
+   * A stack of photographs, one after the other.
+   *
+   * This is the answer to two or three thousand cards. Photographing a card takes
+   * about a second and needs no waiting; reading one takes several and does. Kept
+   * together, the slow half sets the pace for the whole job. Split apart, the phone's
+   * camera app rattles through the stack, and the reading happens afterwards — or
+   * while the next batch is being shot.
+   */
+  async function scanPhotos(files: File[]): Promise<void> {
+    for (const [index, file] of files.entries()) {
+      if (files.length > 1) setFeedback(`Foto ${index + 1} von ${files.length}…`);
+      await scanPhoto(file);
+    }
+    if (files.length > 1) setFeedback(`${files.length} Fotos gelesen.`);
+  }
+
   async function scanPhoto(file: File): Promise<void> {
     const scanner = ocr.current;
     if (!scanner) return;
@@ -1022,7 +1055,67 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
         elementHeight: canvas.height,
       };
 
+      /*
+       * Find the card in the photograph first, exactly as the live scan now does.
+       * Then the number, the set code, the name and the artwork are all at known
+       * places on it, and the sweep below — every region at every quarter turn — is
+       * only needed for a picture the card could not be made out in.
+       */
+      const grey = frameGrey(frame, 240);
+      const spotted = detectCard(grey);
+      const candidates: { card: CardFrame; turn: Turn }[] = spotted
+        ? spotted.sideways
+          ? ([90, 270] as Turn[]).flatMap((turn) =>
+              [true, false].map((right) => ({
+                card: frameFromDetection(spotted, grey.width, grey.height, frame.width, frame.height, right),
+                turn,
+              })),
+            )
+          : [
+              { card: frameFromDetection(spotted, grey.width, grey.height, frame.width, frame.height), turn: 0 as Turn },
+              // A card photographed upside down puts its number at the top; one extra
+              // look is cheaper than a card that has to be typed in by hand.
+              { card: frameFromDetection(spotted, grey.width, grey.height, frame.width, frame.height), turn: 180 as Turn },
+            ]
+        : [];
+
       const readings: string[] = [];
+      for (const { card: onCard, turn } of candidates) {
+        const box = boundingBoxOnCard(onCard, PASSCODE_LINE);
+        for (const threshold of THRESHOLD_PASSES) {
+          for (const mode of OCR_MODES) {
+            const crop = cropPixels(
+              frame,
+              { sx: box.x, sy: box.y, sw: box.width, sh: box.height },
+              { threshold, scale: 4, turn },
+            );
+            showPreview(crop.canvas);
+            const reading = await scanner.read(crop.canvas, mode, false);
+            const cleaned = reading.text.replace(/\s+/g, '');
+            if (cleaned) readings.push(cleaned.slice(0, 30));
+            const match = matchPasscode(reading.text, db, { repair: true });
+            if (!match) continue;
+
+            let setCode: string | null = null;
+            try {
+              setCode = (await readSetCode(frame, crop, match.card, scanner, onCard, turn))?.code ?? null;
+            } catch {
+              // A missing set code is a detail, not a failed scan.
+            }
+            let decision: RarityDecision | null = null;
+            try {
+              decision = await measureRarity(frame.image as HTMLVideoElement, frame, onCard, raritiesIn(match.card, setCode));
+            } catch {
+              // Same rule: a detail that failed, not a failed scan.
+            }
+            memory.current = NO_MEMORY;
+            setReading(null);
+            record({ card: match.card, setCode }, match.exact, decision);
+            return;
+          }
+        }
+      }
+
       let step = 0;
       const total = PHOTO_REGIONS.length * THRESHOLD_PASSES.length * OCR_MODES.length * TURNS.length;
       // Every quarter turn as well: a photo of a card lying on a table can come out
@@ -1220,8 +1313,8 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
 
           <p className="muted" style={{ fontSize: 12.5, margin: '8px 0 0' }}>
             {auto
-              ? 'Ganze Karte ins Bild, ruhig halten. Der grüne Rahmen zeigt, dass die Karte gefunden wurde — dann stimmen Nummer, Set und Rarity. „Foto aufnehmen" ist noch schärfer und läuft nebenher.'
-              : 'Ganze Karte ins Bild, dann tippen. Der grüne Rahmen zeigt, dass die Karte gefunden wurde. „Foto aufnehmen" ist der schärfste Weg.'}
+              ? 'Ganze Karte ins Bild, ruhig halten — der grüne Rahmen zeigt, dass sie gefunden wurde. Für Set und Rarity ist das Foto der sichere Weg: der Set-Code ist im Livebild zu klein.'
+              : 'Ganze Karte ins Bild, dann tippen. Für viele Karten: erst alle abfotografieren, dann „Fotos einlesen" — das liest den ganzen Stapel am Stück.'}
           </p>
 
           <div className="row">
@@ -1231,6 +1324,12 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
               disabled={engine !== 'ready' || working}
             >
               {working ? 'Lese…' : 'Foto aufnehmen'}
+            </button>
+            <button
+              onClick={() => album.current?.click()}
+              disabled={engine !== 'ready' || working}
+            >
+              Fotos einlesen
             </button>
             <button onClick={capture} disabled={status !== 'ready' || engine === 'failed'}>
               Bild jetzt prüfen
@@ -1311,7 +1410,22 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
             onChange={(event) => {
               const file = event.target.files?.[0];
               event.target.value = '';
-              if (file) void scanPhoto(file);
+              if (file) void scanPhotos([file]);
+            }}
+          />
+
+          {/* The same reading, on a stack of photographs already taken. No `capture`,
+              so this opens the photo library rather than the camera. */}
+          <input
+            ref={album}
+            type="file"
+            accept="image/*"
+            multiple
+            style={{ display: 'none' }}
+            onChange={(event) => {
+              const files = [...(event.target.files ?? [])];
+              event.target.value = '';
+              if (files.length > 0) void scanPhotos(files);
             }}
           />
 
