@@ -22,7 +22,7 @@ import {
   type Turn,
 } from '../src/lib/scan';
 import { cardNamed, miniDatabase, setNamed } from './helpers';
-import type { Card } from '../src/lib/types';
+import type { Card, Database } from '../src/lib/types';
 
 const db = miniDatabase();
 const ash = cardNamed(db, 'Ash Blossom & Joyous Spring'); // PHNI, OP27, RS26
@@ -50,6 +50,25 @@ describe('matchPasscode', () => {
   it('refuses when the reading is too far gone', () => {
     expect(matchPasscode('99999999', db, { repair: true })).toBeNull();
     expect(matchPasscode('44558122', db, { repair: true })).toBeNull(); // two digits out
+  });
+
+  it('can repair onto the wrong card, which is why a repair needs backing up', () => {
+    /*
+     * The reason the photo path refuses a repaired number that no set code confirms.
+     * Ash is 14558127. Read with two digits wrong as 14558129, the true number is no
+     * longer a neighbour — but some other real card can be, and then the repair
+     * returns that card with every appearance of success. Reported from real use:
+     * photographs booking cards that were never in the stack.
+     */
+    const twin: Card = { ...pot, id: 14558129, name: 'Nachbarkarte' };
+    const withTwin: Database = {
+      ...db,
+      byPasscode: new Map([...db.byPasscode, [14558129, twin]]),
+    };
+    const repaired = matchPasscode('14558139', withTwin, { repair: true });
+    expect(repaired).toEqual({ card: twin, exact: false });
+    // Nothing about the result says it is wrong — only the set code can say that.
+    expect(repaired?.exact).toBe(false);
   });
 
   it('prefers an exact match over a repair', () => {

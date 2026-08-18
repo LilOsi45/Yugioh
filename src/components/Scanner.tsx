@@ -99,6 +99,20 @@ function raritiesIn(card: Card, setCode: string | null): string[] {
   return [...found].sort();
 }
 
+/**
+ * Fills in the session's set where none was read — and only where it can be true.
+ *
+ * The check is the point: a card that was never printed in that set keeps whatever it
+ * had. A wrong set is worse than no set, because it books the card under a printing
+ * the user does not own and nothing later would question it.
+ */
+export function withSessionSet(result: ScanResult, held: string | null): ScanResult {
+  if (result.setCode || !held) return result;
+  return result.card.printings.some((printing) => printing.set.code === held)
+    ? { ...result, setCode: held }
+    : result;
+}
+
 interface Props {
   db: Database;
   /** Return value decides the feedback line: what the app did with the card. */
@@ -263,6 +277,19 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
   const [turnSeen, setTurnSeen] = useState<Turn>(0);
   /** Held for the whole session once chosen: a rarity collection is all one rarity. */
   const [sessionRarity, setSessionRarity] = useState<string | null>(null);
+  /*
+   * The set every card of this session belongs to.
+   *
+   * Measured on the device: reading the printed set code from the live picture works
+   * only sometimes, because it is printed at about a third the height of the number
+   * and a phone's preview stream does not resolve it. A binder does not need it read
+   * card by card — it is one set from front to back. Said once, every card of the
+   * stack gets it, and the rarity usually follows from it without a tap.
+   *
+   * Only applied where it can be true: the card must actually have a printing in that
+   * set. A card from elsewhere in the stack keeps whatever was read for it.
+   */
+  const [sessionSet, setSessionSet] = useState<string | null>(null);
   /* Proof of life: without these the scanner looks identical whether it is
      searching or dead, which is exactly how the last version failed. */
   const [checked, setChecked] = useState(0);
@@ -307,6 +334,8 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
   turnRef.current = turnSeen;
   const sessionRarityRef = useRef(sessionRarity);
   sessionRarityRef.current = sessionRarity;
+  const sessionSetRef = useRef(sessionSet);
+  sessionSetRef.current = sessionSet;
   /** One audio context for the whole session; creating one per beep is wasteful. */
   const audio = useRef<AudioContext | null>(null);
 
@@ -446,7 +475,11 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
    * there is nothing to ask; the session was told to stick to one rarity; the camera
    * measured it. Anything left over is asked, as chips.
    */
-  function record(result: ScanResult, exact = true, decision?: RarityDecision | null) {
+  function record(input: ScanResult, exact = true, decision?: RarityDecision | null) {
+    // The session's set fills in only what was not read, and only where the card was
+    // really printed — a wrong set is worse than none, because it silently books the
+    // card under a printing the user does not own.
+    const result = withSessionSet(input, sessionSetRef.current);
     const choices = raritiesIn(result.card, result.setCode);
     const held = sessionRarityRef.current;
     let rarity = result.rarity ?? null;
@@ -1011,16 +1044,29 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
    * while the next batch is being shot.
    */
   async function scanPhotos(files: File[]): Promise<void> {
+    let booked = 0;
     for (const [index, file] of files.entries()) {
       if (files.length > 1) setFeedback(`Foto ${index + 1} von ${files.length}…`);
-      await scanPhoto(file);
+      if (await scanPhoto(file)) booked += 1;
     }
-    if (files.length > 1) setFeedback(`${files.length} Fotos gelesen.`);
+    /*
+     * Say what did *not* work. A stack read in one go is read without anybody
+     * watching, and "5 Fotos gelesen" over a stack where two were not booked reads
+     * like success — the two cards are then simply missing, and nothing says which.
+     */
+    if (files.length > 1) {
+      const short = files.length - booked;
+      setFeedback(
+        short === 0
+          ? `${booked} Fotos gelesen, alle erfasst.`
+          : `${booked} von ${files.length} erfasst — ${short} nicht erkannt. Die nochmal fotografieren, Karte formatfüllend.`,
+      );
+    }
   }
 
-  async function scanPhoto(file: File): Promise<void> {
+  async function scanPhoto(file: File): Promise<boolean> {
     const scanner = ocr.current;
-    if (!scanner) return;
+    if (!scanner) return false;
     setWorking(true);
     setFeedback(null);
     setReading('Foto wird gelesen…');
@@ -1050,7 +1096,7 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
       canvas.width = Math.round(source.width * scale);
       canvas.height = Math.round(source.height * scale);
       const context = canvas.getContext('2d', { willReadFrequently: true });
-      if (!context) return;
+      if (!context) return false;
       context.drawImage(image, 0, 0, canvas.width, canvas.height);
       URL.revokeObjectURL(url);
 
@@ -1087,6 +1133,8 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
         : [];
 
       const readings: string[] = [];
+      /** Why this photo was not booked, if it was not. */
+      let missed: string | null = null;
       for (const { card: onCard, turn } of candidates) {
         const box = boundingBoxOnCard(onCard, PASSCODE_LINE);
         for (const threshold of THRESHOLD_PASSES) {
@@ -1109,6 +1157,24 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
             } catch {
               // A missing set code is a detail, not a failed scan.
             }
+
+            /*
+             * A repaired number needs a second opinion, and the set code is one.
+             *
+             * Repairing a misread digit finds the right card when the engine made one
+             * mistake — and a *different real card* when it made two, because eight
+             * digit numbers sit close together and one of them will usually be a
+             * neighbour. Reported from real use: photographs booking cards that were
+             * never in the stack. The set code is independent evidence: it is only
+             * accepted when the card actually has a printing under it, so a wrong card
+             * almost never gets one. Without that confirmation the photo is treated as
+             * unread — a card that has to be photographed again costs a moment, a wrong
+             * card in the collection costs finding it later.
+             */
+            if (!match.exact && !setCode) {
+              missed = missed ?? 'Nummer nur teilweise lesbar';
+              continue;
+            }
             let decision: RarityDecision | null = null;
             try {
               decision = await measureRarity(frame.image as HTMLVideoElement, frame, onCard, raritiesIn(match.card, setCode));
@@ -1118,7 +1184,7 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
             memory.current = NO_MEMORY;
             setReading(null);
             record({ card: match.card, setCode }, match.exact, decision);
-            return;
+            return true;
           }
         }
       }
@@ -1139,8 +1205,6 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
             const cleaned = reading.text.replace(/\s+/g, '');
             if (cleaned) readings.push(cleaned.slice(0, 30));
 
-            // A photo is sharp enough that a repaired digit is a real near miss and
-            // not the noise the continuous scan produces, so repairs are allowed.
             const match = matchPasscode(reading.text, db, { repair: true });
             if (!match) continue;
 
@@ -1173,6 +1237,13 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
               // A missing set code is a detail, not a failed scan.
             }
 
+            // Same rule as above: a repaired number without a set code to back it up
+            // is a guess, and a guess books a card the user does not own.
+            if (!match.exact && !setCode) {
+              missed = missed ?? 'Nummer nur teilweise lesbar';
+              continue;
+            }
+
             let decision: RarityDecision | null = null;
             try {
               const sharp = geometry && passcodeAt && setAt ? refineScale(geometry, passcodeAt, setAt) : null;
@@ -1184,17 +1255,20 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
             memory.current = NO_MEMORY;
             setReading(null);
             record({ card: match.card, setCode }, match.exact, decision);
-            return;
+            return true;
           }
           }
         }
       }
       setReading(readings.length > 0 ? `gelesen: ${readings.join(' / ').slice(0, 120)}` : 'nichts lesbar im Foto');
       setFeedback(
-        'Auf dem Foto war keine bekannte Nummer zu finden. Näher ran, so dass die Karte das Bild füllt, und die Nummer scharf ist.',
+        missed ??
+          'Auf dem Foto war keine bekannte Nummer zu finden. Näher ran, so dass die Karte das Bild füllt, und die Nummer scharf ist.',
       );
+      return false;
     } catch (photoError) {
       setFeedback(`Foto konnte nicht gelesen werden: ${photoError instanceof Error ? photoError.message : String(photoError)}`);
+      return false;
     } finally {
       setWorking(false);
     }
@@ -1359,6 +1433,7 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
                   `Video: ${video.current?.videoWidth ?? 0}x${video.current?.videoHeight ?? 0}, angefragt ${settings.width ?? '?'}x${settings.height ?? '?'}`,
                   `Bilder geprüft: ${checked}, erfasst: ${counted}`,
                   `Zuletzt gelesen: ${reading ?? '—'}`,
+                  `Sitzung: Set ${sessionSet ?? '—'}, Rarity ${sessionRarity ?? '—'}`,
                   `Zuletzt erfasst: ${
                     entries[0]
                       ? `${displayName(entries[0].result.card)} · ${entries[0].result.setCode ?? 'kein Set'} · ${entries[0].result.rarity ?? 'keine Rarity'}`
@@ -1386,6 +1461,17 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
             <div className="notice" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <span style={{ flex: 1 }}>Alle Karten dieser Sitzung: {sessionRarity}</span>
               <button className="link" onClick={() => setSessionRarity(null)}>
+                aufheben
+              </button>
+            </div>
+          )}
+
+          {/* One binder is one set, and the live picture cannot read the set code
+              reliably. Saying it once covers the whole stack. */}
+          {sessionSet && (
+            <div className="notice" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span style={{ flex: 1 }}>Alle Karten dieser Sitzung aus: {sessionSet}</span>
+              <button className="link" onClick={() => setSessionSet(null)}>
                 aufheben
               </button>
             </div>
@@ -1499,7 +1585,12 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
                         ))}
                         {entry.result.rarity && entry.result.rarity !== sessionRarity && (
                           <button className="chip" onClick={() => setSessionRarity(entry.result.rarity ?? null)}>
-                            merken
+                            Rarity merken
+                          </button>
+                        )}
+                        {entry.result.setCode && entry.result.setCode !== sessionSet && (
+                          <button className="chip" onClick={() => setSessionSet(entry.result.setCode)}>
+                            Set merken
                           </button>
                         )}
                         {/* The prices per rarity are not in our data — see
