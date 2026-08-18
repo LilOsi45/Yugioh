@@ -463,7 +463,14 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     const ordered = decision && decision.ranked.length > 0 ? decision.ranked.map((guess) => guess.rarity) : choices;
 
     const message = onCardRef.current(settled);
-    setFeedback(exact ? message : `${message} — unsicher gelesen, bitte prüfen`);
+    /*
+     * Say the rarity in the confirmation line. It was already being recorded — a card
+     * printed at a single rarity in its set gets it without being asked — but nothing
+     * on screen said so, so a working detection was indistinguishable from a broken
+     * one, and got reported as broken.
+     */
+    const spoken = rarity ? `${message} · ${rarity}${detected ? ' (erkannt)' : ''}` : message;
+    setFeedback(exact ? spoken : `${spoken} — unsicher gelesen, bitte prüfen`);
     setEntries((list) =>
       [
         {
@@ -1352,6 +1359,11 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
                   `Video: ${video.current?.videoWidth ?? 0}x${video.current?.videoHeight ?? 0}, angefragt ${settings.width ?? '?'}x${settings.height ?? '?'}`,
                   `Bilder geprüft: ${checked}, erfasst: ${counted}`,
                   `Zuletzt gelesen: ${reading ?? '—'}`,
+                  `Zuletzt erfasst: ${
+                    entries[0]
+                      ? `${displayName(entries[0].result.card)} · ${entries[0].result.setCode ?? 'kein Set'} · ${entries[0].result.rarity ?? 'keine Rarity'}`
+                      : '—'
+                  }`,
                   `Set-Zeile: ${setReadingText ?? '—'}`,
                   `Meldung: ${feedback ?? '—'}`,
                   navigator.userAgent,
