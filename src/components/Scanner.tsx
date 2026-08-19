@@ -36,6 +36,7 @@ import {
   type PassVariant,
   type Reading,
   type Scanner as OcrScanner,
+  type ThresholdOptions,
   type Turn,
   type WordBox,
 } from '../lib/scan';
@@ -123,6 +124,16 @@ interface Props {
   onSummary?: (line: string) => void;
   onClose: () => void;
 }
+
+/**
+ * How long to keep looking for the set code of a card already booked without one.
+ *
+ * Long enough to cover the moment a card stays under the camera, short enough that
+ * the code cannot be picked up off the *next* card. The reading is checked against
+ * the booked card's own printings either way, so a stray code from a neighbour is
+ * refused rather than believed.
+ */
+const SET_HUNT_MS = 4000;
 
 /** How long to wait between attempts while scanning continuously. */
 const SCAN_INTERVAL_MS = 700;
@@ -336,6 +347,18 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
   sessionRarityRef.current = sessionRarity;
   const sessionSetRef = useRef(sessionSet);
   sessionSetRef.current = sessionSet;
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
+  /**
+   * The card just booked without a set, and how long to keep looking for one.
+   *
+   * A card lies under the camera for about nine frames between being picked up and
+   * put down, and until now the set code got exactly one of them — the frame the
+   * number happened to be read in. Whether that one frame resolves text printed at a
+   * third the height of the number is largely luck of the focus. The other eight cost
+   * nothing and were thrown away; now they are the retries.
+   */
+  const hunting = useRef<{ key: number; card: Card; until: number } | null>(null);
   /** One audio context for the whole session; creating one per beep is wasteful. */
   const audio = useRef<AudioContext | null>(null);
 
@@ -495,6 +518,8 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     // Offered best guess first, so the likely correction is the nearest chip.
     const ordered = decision && decision.ranked.length > 0 ? decision.ranked.map((guess) => guess.rarity) : choices;
 
+    const key = Date.now() + Math.random();
+    if (!settled.setCode) hunting.current = { key, card: settled.card, until: Date.now() + SET_HUNT_MS };
     const message = onCardRef.current(settled);
     /*
      * Say the rarity in the confirmation line. It was already being recorded — a card
@@ -507,7 +532,7 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     setEntries((list) =>
       [
         {
-          key: Date.now() + Math.random(),
+          key,
           result: settled,
           message,
           undone: false,
@@ -594,12 +619,14 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
    */
   async function readSetCode(
     frame: Frame,
-    guideCrop: Crop,
+    guideCrop: Crop | null,
     card: Card,
     scanner: OcrScanner,
     rough: CardFrame | null,
     turn: Turn,
+    options: { quick?: boolean; invert?: boolean; threshold?: ThresholdOptions } = {},
   ): Promise<{ code: string; at: { x: number; y: number } | null } | null> {
+    const { quick = false, invert = false, threshold } = options;
     /*
      * A band of the frame, not of the card: it holds the set code wherever on the card
      * that is printed, and it does not depend on having guessed the card's size right.
@@ -618,9 +645,33 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     const onCard = rough
       ? (() => {
           const box = boundingBoxOnCard(rough, SET_CODE_LINE);
-          return cropPixels(frame, { sx: box.x, sy: box.y, sw: box.width, sh: box.height }, { scale: 4, turn });
+          return cropPixels(frame, { sx: box.x, sy: box.y, sw: box.width, sh: box.height }, {
+            scale: 4,
+            turn,
+            invert,
+            ...(threshold ? { threshold } : {}),
+          });
         })()
       : null;
+    /*
+     * A quick look is one crop at one setting, cheap enough to repeat on every frame
+     * while the card is still lying there. That repetition is the point: the code is
+     * printed small, and whether one particular frame resolves it is largely luck of
+     * the focus. Nine frames pass under a card between being picked up and put down,
+     * and until now eight of them were thrown away.
+     */
+    if (quick) {
+      if (!onCard) return null;
+      for (const mode of [SET_CODE_MODE, SET_CODE_SPARSE_MODE]) {
+        const reading = await scanner.read(onCard.canvas, mode, false);
+        const code = extractSetCode(reading.text, card);
+        if (code) {
+          setSetReading(`Set gelesen: ${code}`);
+          return { code, at: null };
+        }
+      }
+      return null;
+    }
     /*
      * The card's own lower band comes first when the geometry is known. It covers both
      * places a card can print its set code — under the artwork, or on the bottom line
@@ -648,9 +699,9 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
       [framed, SET_CODE_MODE] as const,
       [framed, SET_CODE_SPARSE_MODE] as const,
       ...bands.flatMap((band: Crop) => [[band, SET_CODE_MODE] as const, [band, SET_CODE_SPARSE_MODE] as const]),
-      [wide, SET_CODE_MODE],
-      [wide, SET_CODE_SPARSE_MODE],
-      [guideCrop, SET_CODE_MODE],
+      [wide, SET_CODE_MODE] as const,
+      [wide, SET_CODE_SPARSE_MODE] as const,
+      ...(guideCrop ? ([[guideCrop, SET_CODE_MODE]] as const) : []),
     ] as const) {
       const reading = await scanner.read(crop.canvas, mode, detectRarityRef.current);
       const cleaned = reading.text.replace(/\s+/g, ' ').trim();
@@ -831,6 +882,35 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
             },
           ]
         : [{ variant: passVariant(step), turn: held, card: null }];
+
+    /*
+     * Before anything else: is a card still waiting for its set code? Every frame it
+     * stays in view is another chance, at a different moment of focus and a different
+     * threshold — and the set code was the one thing the live scan kept missing.
+     */
+    const hunt = hunting.current;
+    if (hunt && candidates[0]) {
+      if (Date.now() > hunt.until) {
+        hunting.current = null;
+      } else {
+        try {
+          const found = await readSetCode(frame, null, hunt.card, scanner, candidates[0].card, candidates[0].turn, {
+            quick: true,
+            // Rotated across frames: dark on light is the usual print, light on dark
+            // happens on gold and foil borders, and the two need opposite treatment.
+            invert: step % 2 === 1,
+            threshold: THRESHOLD_PASSES[step % THRESHOLD_PASSES.length]!,
+          });
+          if (found) {
+            const entry = entriesRef.current.find((item) => item.key === hunt.key);
+            hunting.current = null;
+            if (entry && !entry.undone && !entry.result.setCode) chooseSet(entry, found.code);
+          }
+        } catch {
+          // A set code that failed to arrive is a detail, not a failed scan.
+        }
+      }
+    }
 
     // Each distinct crop is built once and reused by every variant that wants it.
     const crops = new Map<string, Crop>();
