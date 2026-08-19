@@ -480,6 +480,19 @@ export const SET_CODE_MODE: OcrMode = {
 /** The same, for sparse text: the set code alone on an otherwise empty band. */
 export const SET_CODE_SPARSE_MODE: OcrMode = { ...SET_CODE_MODE, psm: '11' };
 
+/**
+ * For reading the card's name, which is a line of words rather than a code.
+ *
+ * Letters only and no digits: the name never contains one, and leaving them out stops
+ * the engine turning the stylised capitals into numbers. Umlauts are in the list
+ * because German names are full of them, even though the comparison folds them away —
+ * an engine allowed to produce them makes better sense of the letters around them.
+ */
+export const NAME_MODE: OcrMode = {
+  psm: '7',
+  whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÄÖÜäöüß -&',
+};
+
 /** Where a single word sat in the picture that was read, in that picture's pixels. */
 export interface WordBox {
   text: string;

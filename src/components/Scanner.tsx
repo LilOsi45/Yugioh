@@ -26,6 +26,7 @@ import {
   samplePatch,
   samplePixels,
   OCR_MODES,
+  NAME_MODE,
   SET_CODE_MODE,
   SET_CODE_SPARSE_MODE,
   stepScan,
@@ -56,6 +57,7 @@ import {
   type CardFrame,
 } from '../lib/cardGeometry';
 import { combineLooks, decideRarity, measureLook, type Look, type RarityDecision } from '../lib/rarity';
+import { guessLanguage } from '../lib/language';
 import { copyText } from '../lib/tradeText';
 import { displayName } from '../lib/dataset';
 import { cardmarketUrl } from '../lib/market';
@@ -382,7 +384,7 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
    * third the height of the number is largely luck of the focus. The other eight cost
    * nothing and were thrown away; now they are the retries.
    */
-  const hunting = useRef<{ key: number; card: Card; until: number } | null>(null);
+  const hunting = useRef<{ key: number; card: Card; until: number; language: boolean } | null>(null);
   /** One audio context for the whole session; creating one per beep is wasteful. */
   const audio = useRef<AudioContext | null>(null);
 
@@ -590,7 +592,21 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     const ordered = decision && decision.ranked.length > 0 ? decision.ranked.map((guess) => guess.rarity) : choices;
 
     const key = Date.now() + Math.random();
-    if (!settled.setCode) hunting.current = { key, card: settled.card, until: Date.now() + SET_HUNT_MS };
+    /*
+     * Two things can still be missing after a card is booked, and both are worth the
+     * frames it is still lying there for: which printing it is, and which language.
+     * The language only rides on the set code, so a card whose code was not read has
+     * no language either — and that is what came back from the device: `kein Set ·
+     * keine Rarity · keine Sprache`.
+     */
+    if (!settled.setCode || !language) {
+      hunting.current = {
+        key,
+        card: settled.card,
+        until: Date.now() + SET_HUNT_MS,
+        language: !language && Boolean(settled.card.nameDe),
+      };
+    }
     const message = onCardRef.current(settled);
     /*
      * Say the rarity in the confirmation line. It was already being recorded — a card
@@ -809,6 +825,34 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
   }
 
   /**
+   * Reads the card's name and decides which language it is printed in.
+   *
+   * Only reached when the set code did not arrive, which live is most of the time. The
+   * name is set several times larger than the code, and the answer does not have to be
+   * read correctly — only matched against the two names the index already holds for
+   * this card. A near tie, an untranslated card, or a name too poorly read all end in
+   * no answer rather than a wrong one.
+   */
+  async function readLanguage(
+    frame: Frame,
+    card: Card,
+    scanner: OcrScanner,
+    rough: CardFrame,
+    turn: Turn,
+  ): Promise<'DE' | 'EN' | null> {
+    if (!card.nameDe) return null;
+    const box = boundingBoxOnCard(rough, NAME_REGION);
+    const crop = cropPixels(frame, { sx: box.x, sy: box.y, sw: box.width, sh: box.height }, {
+      scale: 4,
+      turn,
+    });
+    const reading = await scanner.read(crop.canvas, NAME_MODE, false);
+    const guess = guessLanguage(reading.text, card.name, card.nameDe);
+    if (guess.language) setSetReading((line) => [line, `Sprache: ${guess.language}`].filter(Boolean).join(' · '));
+    return guess.language;
+  }
+
+  /**
    * Works out the rarity from how the card looks.
    *
    * Everything needed to place the card in the picture is already in hand: the
@@ -1006,13 +1050,34 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
             invert: step % 2 === 1,
             threshold: THRESHOLD_PASSES[step % THRESHOLD_PASSES.length]!,
           });
-          if (found) {
-            const entry = entriesRef.current.find((item) => item.key === hunt.key);
+          const entry = entriesRef.current.find((item) => item.key === hunt.key);
+          if (found && entry && !entry.undone && !entry.result.setCode) {
+            chooseSet(entry, found.code);
+            if (found.language) chooseLanguage(entry, found.language);
+          }
+          /*
+           * The name, when the code did not come. It is printed several times larger
+           * than the code, and the answer only has to be matched against the two names
+           * the index already holds for this card rather than read correctly.
+           */
+          if (hunt.language && !found?.language) {
+            const language = await readLanguage(
+              frame,
+              hunt.card,
+              scanner,
+              candidates[0].card,
+              candidates[0].turn,
+            );
+            const fresh = entriesRef.current.find((item) => item.key === hunt.key);
+            if (language && fresh && !fresh.undone && !fresh.result.language) {
+              chooseLanguage(fresh, language);
+              hunting.current = null;
+            }
+          } else if (found) {
             hunting.current = null;
-            if (entry && !entry.undone && !entry.result.setCode) chooseSet(entry, found.code);
           }
         } catch {
-          // A set code that failed to arrive is a detail, not a failed scan.
+          // A detail that failed to arrive is not a failed scan.
         }
       }
     }
@@ -1338,12 +1403,13 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
             const match = matchPasscode(reading.text, db, { repair: true });
             if (!match) continue;
 
-            let setCode: string | null = null;
+            let found: { code: string; language: string | null } | null = null;
             try {
-              setCode = (await readSetCode(frame, crop, match.card, scanner, onCard, turn))?.code ?? null;
+              found = await readSetCode(frame, crop, match.card, scanner, onCard, turn);
             } catch {
               // A missing set code is a detail, not a failed scan.
             }
+            const setCode = found?.code ?? null;
 
             /*
              * A repaired number needs a second opinion, and the set code is one.
@@ -1368,9 +1434,18 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
             } catch {
               // Same rule: a detail that failed, not a failed scan.
             }
+            // The language is only in the set code; without it, the name has to say so.
+            let language = found?.language ?? null;
+            if (!language) {
+              try {
+                language = await readLanguage(frame, match.card, scanner, onCard, turn);
+              } catch {
+                // Same rule again.
+              }
+            }
             memory.current = NO_MEMORY;
             setReading(null);
-            record({ card: match.card, setCode }, match.exact, decision);
+            record({ card: match.card, setCode, language }, match.exact, decision);
             return true;
           }
         }
