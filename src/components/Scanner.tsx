@@ -7,7 +7,9 @@ import {
   cropGuide,
   cropPixels,
   cropVideoRegion,
+  extractLanguage,
   extractSetCode,
+  LANGUAGES,
   matchPasscode,
   NO_MEMORY,
   PASS_VARIANTS,
@@ -69,6 +71,8 @@ export interface ScanResult {
   card: Card;
   setCode: string | null;
   rarity?: string | null;
+  /** `DE`, `EN`, … — read out of the set code, which carries it. */
+  language?: string | null;
 }
 
 /**
@@ -310,6 +314,15 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
    * set. A card from elsewhere in the stack keeps whatever was read for it.
    */
   const [sessionSet, setSessionSet] = useState<string | null>(null);
+  /*
+   * The language every card of this session is in.
+   *
+   * Same reasoning as the session's set, and it matters more: the language is only
+   * printed inside the set code, so a card whose code was not read has no language
+   * either. A binder is almost always one language, and mixing German and English
+   * copies into one count is exactly the mistake a Cardmarket listing must not make.
+   */
+  const [sessionLanguage, setSessionLanguage] = useState<string | null>(null);
   /* Proof of life: without these the scanner looks identical whether it is
      searching or dead, which is exactly how the last version failed. */
   const [checked, setChecked] = useState(0);
@@ -356,6 +369,8 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
   sessionRarityRef.current = sessionRarity;
   const sessionSetRef = useRef(sessionSet);
   sessionSetRef.current = sessionSet;
+  const sessionLanguageRef = useRef(sessionLanguage);
+  sessionLanguageRef.current = sessionLanguage;
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
   /**
@@ -511,7 +526,11 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     // The session's set fills in only what was not read, and only where the card was
     // really printed — a wrong set is worse than none, because it silently books the
     // card under a printing the user does not own.
-    const result = withSessionSet(input, sessionSetRef.current);
+    const withSet = withSessionSet(input, sessionSetRef.current);
+    // Nothing to verify the language against — unlike the set, it is not in the card
+    // index — so the session's answer simply fills a gap it did not have.
+    const result: ScanResult =
+      withSet.language ? withSet : { ...withSet, language: sessionLanguageRef.current };
     const choices = raritiesIn(result.card, result.setCode);
     const held = sessionRarityRef.current;
     let rarity = result.rarity ?? null;
@@ -524,6 +543,7 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     }
 
     const settled: ScanResult = rarity ? { ...result, rarity } : result;
+    const language = settled.language ?? null;
     // Offered best guess first, so the likely correction is the nearest chip.
     const ordered = decision && decision.ranked.length > 0 ? decision.ranked.map((guess) => guess.rarity) : choices;
 
@@ -536,7 +556,9 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
      * on screen said so, so a working detection was indistinguishable from a broken
      * one, and got reported as broken.
      */
-    const spoken = rarity ? `${message} · ${rarity}${detected ? ' (erkannt)' : ''}` : message;
+    const spoken = [message, rarity ? `${rarity}${detected ? ' (erkannt)' : ''}` : null, language]
+      .filter(Boolean)
+      .join(' · ');
     setFeedback(exact ? spoken : `${spoken} — unsicher gelesen, bitte prüfen`);
     setEntries((list) =>
       [
@@ -592,6 +614,19 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     );
   }
 
+  /**
+   * Sets or corrects the language of a copy already booked.
+   *
+   * Same shape as `chooseSet`: take the copy back off under its old key and book it
+   * under the new one, so the count cannot drift.
+   */
+  function chooseLanguage(entry: Entry, language: string) {
+    onUndo?.(entry.result);
+    const updated: ScanResult = { ...entry.result, language };
+    onCardRef.current(updated);
+    setEntries((list) => list.map((item) => (item.key === entry.key ? { ...item, result: updated } : item)));
+  }
+
   /** Another copy of a card already in hand, without scanning it again. */
   function again(entry: Entry) {
     record(entry.result, entry.exact);
@@ -634,7 +669,7 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     rough: CardFrame | null,
     turn: Turn,
     options: { quick?: boolean; invert?: boolean; threshold?: ThresholdOptions } = {},
-  ): Promise<{ code: string; at: { x: number; y: number } | null } | null> {
+  ): Promise<{ code: string; language: string | null; at: { x: number; y: number } | null } | null> {
     const { quick = false, invert = false, threshold } = options;
     /*
      * A band of the frame, not of the card: it holds the set code wherever on the card
@@ -675,8 +710,9 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
         const reading = await scanner.read(onCard.canvas, mode, false);
         const code = extractSetCode(reading.text, card);
         if (code) {
-          setSetReading(`Set gelesen: ${code}`);
-          return { code, at: null };
+          const language = extractLanguage(reading.text, code);
+          setSetReading(`Set gelesen: ${code}${language ? ` (${language})` : ''}`);
+          return { code, language, at: null };
         }
       }
       return null;
@@ -717,10 +753,11 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
       if (cleaned) readings.push(cleaned);
       const code = extractSetCode(reading.text, card);
       if (code) {
-        setSetReading(`Set gelesen: ${code}`);
+        const language = extractLanguage(reading.text, code);
+        setSetReading(`Set gelesen: ${code}${language ? ` (${language})` : ''}`);
         // Where the code sits is the second anchor the rarity measurement needs.
         const word = setCodeWord(reading.words, code);
-        return { code, at: word ? wordCentre(word, crop) : null };
+        return { code, language, at: word ? wordCentre(word, crop) : null };
       }
     }
     // Nothing usable: show the raw text, so a failure can be diagnosed from the
@@ -1541,10 +1578,10 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
                   `Video: ${video.current?.videoWidth ?? 0}x${video.current?.videoHeight ?? 0}, angefragt ${settings.width ?? '?'}x${settings.height ?? '?'}`,
                   `Bilder geprüft: ${checked}, erfasst: ${counted}`,
                   `Zuletzt gelesen: ${reading ?? '—'}`,
-                  `Sitzung: Set ${sessionSet ?? '—'}, Rarity ${sessionRarity ?? '—'}`,
+                  `Sitzung: Set ${sessionSet ?? '—'}, Rarity ${sessionRarity ?? '—'}, Sprache ${sessionLanguage ?? '—'}`,
                   `Zuletzt erfasst: ${
                     entries[0]
-                      ? `${displayName(entries[0].result.card)} · ${entries[0].result.setCode ?? 'kein Set'} · ${entries[0].result.rarity ?? 'keine Rarity'}`
+                      ? `${displayName(entries[0].result.card)} · ${entries[0].result.setCode ?? 'kein Set'} · ${entries[0].result.rarity ?? 'keine Rarity'} · ${entries[0].result.language ?? 'keine Sprache'}`
                       : '—'
                   }`,
                   `Set-Zeile: ${setReadingText ?? '—'}`,
@@ -1569,6 +1606,15 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
             <div className="notice" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <span style={{ flex: 1 }}>Alle Karten dieser Sitzung: {sessionRarity}</span>
               <button className="link" onClick={() => setSessionRarity(null)}>
+                aufheben
+              </button>
+            </div>
+          )}
+
+          {sessionLanguage && (
+            <div className="notice" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span style={{ flex: 1 }}>Alle Karten dieser Sitzung auf: {sessionLanguage}</span>
+              <button className="link" onClick={() => setSessionLanguage(null)}>
                 aufheben
               </button>
             </div>
@@ -1699,6 +1745,23 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
                         {entry.result.setCode && entry.result.setCode !== sessionSet && (
                           <button className="chip" onClick={() => setSessionSet(entry.result.setCode)}>
                             Set merken
+                          </button>
+                        )}
+                        {/* The language decides which listing a copy belongs to, so it
+                            is offered on every card rather than only when unread. */}
+                        {LANGUAGES.slice(0, 2).map((language) => (
+                          <button
+                            key={language}
+                            className="chip"
+                            aria-pressed={entry.result.language === language}
+                            onClick={() => chooseLanguage(entry, language)}
+                          >
+                            {language}
+                          </button>
+                        ))}
+                        {entry.result.language && entry.result.language !== sessionLanguage && (
+                          <button className="chip" onClick={() => setSessionLanguage(entry.result.language ?? null)}>
+                            Sprache merken
                           </button>
                         )}
                         {/* The prices per rarity are not in our data — see

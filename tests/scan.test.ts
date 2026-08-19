@@ -4,6 +4,7 @@ import {
   CLEAR_AFTER_MS,
   adaptiveThreshold,
   coverSourceRect,
+  extractLanguage,
   extractSetCode,
   guideBox,
   PASSCODE_LINE,
@@ -375,5 +376,28 @@ describe('stepScan', () => {
     expect(memory.cardId).toBe(A);
     memory = stepScan(memory, null, 1700 + CLEAR_AFTER_MS).memory;
     expect(memory.cardId).toBeNull();
+  });
+});
+
+describe('extractLanguage', () => {
+  it('reads the language out of the printed code', () => {
+    expect(extractLanguage('MAGO-DE009', 'MAGO')).toBe('DE');
+    expect(extractLanguage('14558127 PHNI-EN087 1st Edition', 'PHNI')).toBe('EN');
+    expect(extractLanguage('OP27-FR002', 'OP27')).toBe('FR');
+  });
+
+  it('survives the confusions OCR makes in the code itself', () => {
+    // PHN1 for PHNI, and the language still has to be found after it.
+    expect(extractLanguage('PHN1-DE087', 'PHNI')).toBe('DE');
+  });
+
+  it('says nothing rather than guessing when there is no language part', () => {
+    // The oldest printings carry no language at all, and old German ones carry G.
+    expect(extractLanguage('LOB-005', 'LOB')).toBeNull();
+    expect(extractLanguage('MAGO-009', 'MAGO')).toBeNull();
+  });
+
+  it('says nothing when the code is not in the reading', () => {
+    expect(extractLanguage('nothing here', 'PHNI')).toBeNull();
   });
 });

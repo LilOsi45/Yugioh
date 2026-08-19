@@ -134,6 +134,39 @@ function shape(code: string): string {
 }
 
 /**
+ * The languages a printing is marked with, in the code itself: `MAGO-DE009`.
+ *
+ * A German and an English copy of the same card are two different things to sell —
+ * different listing, different price, and mixing them up is a complaint from a buyer.
+ * The information was in the reading all along and thrown away, because the set code
+ * pass kept only the prefix.
+ *
+ * German cards from before roughly 2002 carry `G` instead of `DE`, and the earliest
+ * printings carry no language at all; both are simply not recognised rather than
+ * guessed at.
+ */
+export const LANGUAGES = ['DE', 'EN', 'FR', 'IT', 'SP', 'PT', 'JP', 'KR'] as const;
+
+export function extractLanguage(text: string, code: string): string | null {
+  const cleaned = text.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const upper = code.toUpperCase();
+  for (const [haystack, needle] of [
+    [cleaned, upper],
+    // Shape mapping is character by character, so an index into the shaped string is
+    // the same index into the real one.
+    [shape(cleaned), shape(upper)],
+  ] as const) {
+    const index = haystack.indexOf(needle);
+    if (index === -1) continue;
+    const letters = /^[A-Z]{1,2}/.exec(cleaned.slice(index + upper.length, index + upper.length + 3))?.[0];
+    if (!letters) continue;
+    const hit = LANGUAGES.find((language) => language === letters || shape(language) === shape(letters));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/**
  * Reads which printing the scanned card is, from the same crop as the passcode.
  *
  * Searches the reading for the codes of the sets *this card* was printed in, rather

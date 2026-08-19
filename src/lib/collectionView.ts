@@ -10,6 +10,8 @@ export interface CollectionEntry {
   bySet?: ReadonlyMap<string, number>;
   /** Set when the row stands for one printing, as the set grouping produces. */
   rarity?: string | null;
+  /** `DE`, `EN`, … — which language this copy is printed in, when it was recorded. */
+  language?: string | null;
 }
 
 export type CollectionSort = 'set' | 'type' | 'name' | 'price' | 'count';
@@ -116,9 +118,9 @@ export function groupBySet(entries: CollectionEntry[], db: Database): SetGroup[]
     for (const [key, count] of bySet) {
       if (count <= 0) continue;
       // Keys carry the rarity too; the group is the set, the rarity rides on the row.
-      const { setCode, rarity } = parseHoldingKey(key);
+      const { setCode, rarity, language } = parseHoldingKey(key);
       const bucket = groups.get(setCode);
-      const scoped: CollectionEntry = { card: entry.card, count, rarity };
+      const scoped: CollectionEntry = { card: entry.card, count, rarity, language };
       if (bucket) bucket.push(scoped);
       else groups.set(setCode, [scoped]);
     }
