@@ -36,7 +36,7 @@ export function BuildMode({ saved, db, collection, onChange, onBack }: Props) {
 
   /** Where a scanned copy is filed: set and rarity when known, otherwise nowhere. */
   function keyFor(result: ScanResult): string {
-    return result.setCode ? holdingKey(result.setCode, result.rarity) : UNKNOWN_SET;
+    return result.setCode ? holdingKey(result.setCode, result.rarity, result.language) : UNKNOWN_SET;
   }
 
   /** Returns the line shown to the user, so the scanner can echo what happened. */

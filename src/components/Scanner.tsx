@@ -7,7 +7,9 @@ import {
   cropGuide,
   cropPixels,
   cropVideoRegion,
+  extractLanguage,
   extractSetCode,
+  LANGUAGES,
   matchPasscode,
   NO_MEMORY,
   PASS_VARIANTS,
@@ -40,7 +42,7 @@ import {
   type Turn,
   type WordBox,
 } from '../lib/scan';
-import { detectCard, frameFromDetection } from '../lib/cardDetect';
+import { detectCard, frameFromDetection, insideSleeve } from '../lib/cardDetect';
 import {
   ART_REGION,
   boundingBoxOnCard,
@@ -69,6 +71,8 @@ export interface ScanResult {
   card: Card;
   setCode: string | null;
   rarity?: string | null;
+  /** `DE`, `EN`, … — read out of the set code, which carries it. */
+  language?: string | null;
 }
 
 /**
@@ -134,6 +138,15 @@ interface Props {
  * refused rather than believed.
  */
 const SET_HUNT_MS = 4000;
+
+/**
+ * How many of the shapes a frame might be showing to try in a single tick.
+ *
+ * Four covers the two that matter — the rectangle that was found and the card that
+ * would sit inside it if that rectangle were a sleeve — for a card lying either way
+ * up. Beyond that a tick starts outlasting the card.
+ */
+const AUTO_CANDIDATES = 4;
 
 /** How long to wait between attempts while scanning continuously. */
 const SCAN_INTERVAL_MS = 700;
@@ -301,6 +314,15 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
    * set. A card from elsewhere in the stack keeps whatever was read for it.
    */
   const [sessionSet, setSessionSet] = useState<string | null>(null);
+  /*
+   * The language every card of this session is in.
+   *
+   * Same reasoning as the session's set, and it matters more: the language is only
+   * printed inside the set code, so a card whose code was not read has no language
+   * either. A binder is almost always one language, and mixing German and English
+   * copies into one count is exactly the mistake a Cardmarket listing must not make.
+   */
+  const [sessionLanguage, setSessionLanguage] = useState<string | null>(null);
   /* Proof of life: without these the scanner looks identical whether it is
      searching or dead, which is exactly how the last version failed. */
   const [checked, setChecked] = useState(0);
@@ -347,6 +369,8 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
   sessionRarityRef.current = sessionRarity;
   const sessionSetRef = useRef(sessionSet);
   sessionSetRef.current = sessionSet;
+  const sessionLanguageRef = useRef(sessionLanguage);
+  sessionLanguageRef.current = sessionLanguage;
   const entriesRef = useRef(entries);
   entriesRef.current = entries;
   /**
@@ -502,7 +526,11 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     // The session's set fills in only what was not read, and only where the card was
     // really printed — a wrong set is worse than none, because it silently books the
     // card under a printing the user does not own.
-    const result = withSessionSet(input, sessionSetRef.current);
+    const withSet = withSessionSet(input, sessionSetRef.current);
+    // Nothing to verify the language against — unlike the set, it is not in the card
+    // index — so the session's answer simply fills a gap it did not have.
+    const result: ScanResult =
+      withSet.language ? withSet : { ...withSet, language: sessionLanguageRef.current };
     const choices = raritiesIn(result.card, result.setCode);
     const held = sessionRarityRef.current;
     let rarity = result.rarity ?? null;
@@ -515,6 +543,7 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     }
 
     const settled: ScanResult = rarity ? { ...result, rarity } : result;
+    const language = settled.language ?? null;
     // Offered best guess first, so the likely correction is the nearest chip.
     const ordered = decision && decision.ranked.length > 0 ? decision.ranked.map((guess) => guess.rarity) : choices;
 
@@ -527,7 +556,9 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
      * on screen said so, so a working detection was indistinguishable from a broken
      * one, and got reported as broken.
      */
-    const spoken = rarity ? `${message} · ${rarity}${detected ? ' (erkannt)' : ''}` : message;
+    const spoken = [message, rarity ? `${rarity}${detected ? ' (erkannt)' : ''}` : null, language]
+      .filter(Boolean)
+      .join(' · ');
     setFeedback(exact ? spoken : `${spoken} — unsicher gelesen, bitte prüfen`);
     setEntries((list) =>
       [
@@ -583,6 +614,19 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     );
   }
 
+  /**
+   * Sets or corrects the language of a copy already booked.
+   *
+   * Same shape as `chooseSet`: take the copy back off under its old key and book it
+   * under the new one, so the count cannot drift.
+   */
+  function chooseLanguage(entry: Entry, language: string) {
+    onUndo?.(entry.result);
+    const updated: ScanResult = { ...entry.result, language };
+    onCardRef.current(updated);
+    setEntries((list) => list.map((item) => (item.key === entry.key ? { ...item, result: updated } : item)));
+  }
+
   /** Another copy of a card already in hand, without scanning it again. */
   function again(entry: Entry) {
     record(entry.result, entry.exact);
@@ -625,7 +669,7 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
     rough: CardFrame | null,
     turn: Turn,
     options: { quick?: boolean; invert?: boolean; threshold?: ThresholdOptions } = {},
-  ): Promise<{ code: string; at: { x: number; y: number } | null } | null> {
+  ): Promise<{ code: string; language: string | null; at: { x: number; y: number } | null } | null> {
     const { quick = false, invert = false, threshold } = options;
     /*
      * A band of the frame, not of the card: it holds the set code wherever on the card
@@ -666,8 +710,9 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
         const reading = await scanner.read(onCard.canvas, mode, false);
         const code = extractSetCode(reading.text, card);
         if (code) {
-          setSetReading(`Set gelesen: ${code}`);
-          return { code, at: null };
+          const language = extractLanguage(reading.text, code);
+          setSetReading(`Set gelesen: ${code}${language ? ` (${language})` : ''}`);
+          return { code, language, at: null };
         }
       }
       return null;
@@ -708,10 +753,11 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
       if (cleaned) readings.push(cleaned);
       const code = extractSetCode(reading.text, card);
       if (code) {
-        setSetReading(`Set gelesen: ${code}`);
+        const language = extractLanguage(reading.text, code);
+        setSetReading(`Set gelesen: ${code}${language ? ` (${language})` : ''}`);
         // Where the code sits is the second anchor the rarity measurement needs.
         const word = setCodeWord(reading.words, code);
-        return { code, at: word ? wordCentre(word, crop) : null };
+        return { code, language, at: word ? wordCentre(word, crop) : null };
       }
     }
     // Nothing usable: show the raw text, so a failure can be diagnosed from the
@@ -833,21 +879,33 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
      * which end is the top, and which way the text runs. Both are cheap to try, so
      * they are tried rather than guessed.
      */
-    const candidates: { card: CardFrame; turn: Turn }[] = spotted
-      ? spotted.sideways
+    /*
+     * Both the rectangle that was found and the card that would sit inside it if that
+     * rectangle were a sleeve.
+     *
+     * The search takes the *outermost* card-shaped rectangle, which is right for a bare
+     * card — the artwork inside it must not win — and wrong for a sleeved one, where the
+     * outermost rectangle is the sleeve. Reported from real use: sleeved cards read
+     * almost not at all. Six millimetres of plastic move everything addressed in card
+     * fractions by about that much of the card's height, and the number's strip is a
+     * tenth of it. Which of the two it is cannot be told from the outline, so both go in.
+     */
+    const shapes = spotted ? [spotted, insideSleeve(spotted)] : [];
+    const candidates: { card: CardFrame; turn: Turn }[] = shapes.flatMap((shape) =>
+      shape.sideways
         ? ([90, 270] as Turn[]).flatMap((turn) =>
             [true, false].map((right) => ({
-              card: frameFromDetection(spotted, grey.width, grey.height, frame.width, frame.height, right),
+              card: frameFromDetection(shape, grey.width, grey.height, frame.width, frame.height, right),
               turn,
             })),
           )
         : [
             {
-              card: frameFromDetection(spotted, grey.width, grey.height, frame.width, frame.height),
+              card: frameFromDetection(shape, grey.width, grey.height, frame.width, frame.height),
               turn: 0 as Turn,
             },
-          ]
-      : [];
+          ],
+    );
     setFound(
       spotted
         ? frameRectOnElement(frame.width, frame.height, frame.elementWidth, frame.elementHeight, {
@@ -874,13 +932,18 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
           ...inverted.map((variant) => ({ variant, turn: held, card: null })),
         ]
       : candidates.length > 0
-        ? [
-            {
-              variant: passVariant(step),
-              turn: candidates[step % candidates.length]!.turn,
-              card: candidates[step % candidates.length]!.card,
-            },
-          ]
+        ? /*
+           * Every shape the picture might be showing, in one tick, rather than one per
+           * tick. The crops are the cheap part and the seven hundred millisecond wait
+           * between ticks is not: with a card and a sleeve to tell apart, taking turns
+           * put a sleeved card at forty-five seconds against five for a bare one. Same
+           * number of recognitions, a quarter of the waiting.
+           */
+          candidates.slice(0, AUTO_CANDIDATES).map(({ card, turn }) => ({
+            variant: passVariant(step),
+            turn,
+            card,
+          }))
         : [{ variant: passVariant(step), turn: held, card: null }];
 
     /*
@@ -1196,21 +1259,23 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
        */
       const grey = frameGrey(frame, 240);
       const spotted = detectCard(grey);
-      const candidates: { card: CardFrame; turn: Turn }[] = spotted
-        ? spotted.sideways
+      // The found rectangle and the card inside it, in case that rectangle is a sleeve.
+      const shapes = spotted ? [spotted, insideSleeve(spotted)] : [];
+      const candidates: { card: CardFrame; turn: Turn }[] = shapes.flatMap((shape) =>
+        shape.sideways
           ? ([90, 270] as Turn[]).flatMap((turn) =>
               [true, false].map((right) => ({
-                card: frameFromDetection(spotted, grey.width, grey.height, frame.width, frame.height, right),
+                card: frameFromDetection(shape, grey.width, grey.height, frame.width, frame.height, right),
                 turn,
               })),
             )
           : [
-              { card: frameFromDetection(spotted, grey.width, grey.height, frame.width, frame.height), turn: 0 as Turn },
+              { card: frameFromDetection(shape, grey.width, grey.height, frame.width, frame.height), turn: 0 as Turn },
               // A card photographed upside down puts its number at the top; one extra
               // look is cheaper than a card that has to be typed in by hand.
-              { card: frameFromDetection(spotted, grey.width, grey.height, frame.width, frame.height), turn: 180 as Turn },
-            ]
-        : [];
+              { card: frameFromDetection(shape, grey.width, grey.height, frame.width, frame.height), turn: 180 as Turn },
+            ],
+      );
 
       const readings: string[] = [];
       /** Why this photo was not booked, if it was not. */
@@ -1474,8 +1539,8 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
 
           <p className="muted" style={{ fontSize: 12.5, margin: '8px 0 0' }}>
             {auto
-              ? 'Ganze Karte ins Bild, ruhig halten — der grüne Rahmen zeigt, dass sie gefunden wurde. Für Set und Rarity ist das Foto der sichere Weg: der Set-Code ist im Livebild zu klein.'
-              : 'Ganze Karte ins Bild, dann tippen. Für viele Karten: erst alle abfotografieren, dann „Fotos einlesen" — das liest den ganzen Stapel am Stück.'}
+              ? 'Ganze Karte ins Bild, mit etwas Rand ringsum — die Karte wird an ihren vier Kanten gegen die Unterlage erkannt. Grüner Rahmen = gefunden. Karte nach dem Piep kurz liegen lassen, der Set-Code kommt oft ein, zwei Bilder später.'
+              : 'Ganze Karte ins Bild, mit Rand ringsum, dann tippen. Für viele Karten: erst alle abfotografieren, dann „Fotos einlesen".'}
           </p>
 
           <div className="row">
@@ -1513,10 +1578,10 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
                   `Video: ${video.current?.videoWidth ?? 0}x${video.current?.videoHeight ?? 0}, angefragt ${settings.width ?? '?'}x${settings.height ?? '?'}`,
                   `Bilder geprüft: ${checked}, erfasst: ${counted}`,
                   `Zuletzt gelesen: ${reading ?? '—'}`,
-                  `Sitzung: Set ${sessionSet ?? '—'}, Rarity ${sessionRarity ?? '—'}`,
+                  `Sitzung: Set ${sessionSet ?? '—'}, Rarity ${sessionRarity ?? '—'}, Sprache ${sessionLanguage ?? '—'}`,
                   `Zuletzt erfasst: ${
                     entries[0]
-                      ? `${displayName(entries[0].result.card)} · ${entries[0].result.setCode ?? 'kein Set'} · ${entries[0].result.rarity ?? 'keine Rarity'}`
+                      ? `${displayName(entries[0].result.card)} · ${entries[0].result.setCode ?? 'kein Set'} · ${entries[0].result.rarity ?? 'keine Rarity'} · ${entries[0].result.language ?? 'keine Sprache'}`
                       : '—'
                   }`,
                   `Set-Zeile: ${setReadingText ?? '—'}`,
@@ -1541,6 +1606,15 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
             <div className="notice" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <span style={{ flex: 1 }}>Alle Karten dieser Sitzung: {sessionRarity}</span>
               <button className="link" onClick={() => setSessionRarity(null)}>
+                aufheben
+              </button>
+            </div>
+          )}
+
+          {sessionLanguage && (
+            <div className="notice" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span style={{ flex: 1 }}>Alle Karten dieser Sitzung auf: {sessionLanguage}</span>
+              <button className="link" onClick={() => setSessionLanguage(null)}>
                 aufheben
               </button>
             </div>
@@ -1671,6 +1745,23 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
                         {entry.result.setCode && entry.result.setCode !== sessionSet && (
                           <button className="chip" onClick={() => setSessionSet(entry.result.setCode)}>
                             Set merken
+                          </button>
+                        )}
+                        {/* The language decides which listing a copy belongs to, so it
+                            is offered on every card rather than only when unread. */}
+                        {LANGUAGES.slice(0, 2).map((language) => (
+                          <button
+                            key={language}
+                            className="chip"
+                            aria-pressed={entry.result.language === language}
+                            onClick={() => chooseLanguage(entry, language)}
+                          >
+                            {language}
+                          </button>
+                        ))}
+                        {entry.result.language && entry.result.language !== sessionLanguage && (
+                          <button className="chip" onClick={() => setSessionLanguage(entry.result.language ?? null)}>
+                            Sprache merken
                           </button>
                         )}
                         {/* The prices per rarity are not in our data — see

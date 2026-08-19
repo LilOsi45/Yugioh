@@ -125,18 +125,48 @@ describe('holding keys', () => {
   it('keeps the plain set code when no rarity is known', () => {
     expect(holdingKey('PHNI')).toBe('PHNI');
     expect(holdingKey('PHNI', null)).toBe('PHNI');
-    expect(parseHoldingKey('PHNI')).toEqual({ setCode: 'PHNI', rarity: null });
+    expect(parseHoldingKey('PHNI')).toEqual({ setCode: 'PHNI', rarity: null, language: null });
   });
 
   it('carries the rarity alongside the set', () => {
     expect(holdingKey('PHNI', 'Secret Rare')).toBe('PHNI|Secret Rare');
-    expect(parseHoldingKey('PHNI|Secret Rare')).toEqual({ setCode: 'PHNI', rarity: 'Secret Rare' });
+    expect(parseHoldingKey('PHNI|Secret Rare')).toEqual({
+      setCode: 'PHNI',
+      rarity: 'Secret Rare',
+      language: null,
+    });
   });
 
-  it('reads collections saved before rarity existed', () => {
-    // The stored shape never changed, so an old file needs no migration.
+  it('carries the language as a third field', () => {
+    // What a Cardmarket listing turns on: a German and an English copy are two
+    // different things to sell and cannot share a count.
+    expect(holdingKey('PHNI', 'Secret Rare', 'DE')).toBe('PHNI|Secret Rare|DE');
+    expect(parseHoldingKey('PHNI|Secret Rare|DE')).toEqual({
+      setCode: 'PHNI',
+      rarity: 'Secret Rare',
+      language: 'DE',
+    });
+  });
+
+  it('records a language even when the rarity is unknown', () => {
+    expect(holdingKey('PHNI', null, 'EN')).toBe('PHNI||EN');
+    expect(parseHoldingKey('PHNI||EN')).toEqual({ setCode: 'PHNI', rarity: null, language: 'EN' });
+  });
+
+  it('reads collections saved before rarity or language existed', () => {
+    // The stored shape never changed, so an old file needs no migration: a key with
+    // fewer fields simply means those were never recorded.
     const old = parseCollection('{"14558127":{"PHNI":2}}');
-    expect(parseHoldingKey([...old.get(ASH)!.bySet.keys()][0]!)).toEqual({ setCode: 'PHNI', rarity: null });
+    expect(parseHoldingKey([...old.get(ASH)!.bySet.keys()][0]!)).toEqual({
+      setCode: 'PHNI',
+      rarity: null,
+      language: null,
+    });
+    expect(parseHoldingKey('PHNI|Common')).toEqual({
+      setCode: 'PHNI',
+      rarity: 'Common',
+      language: null,
+    });
   });
 
   it('counts the same card at two rarities as separate piles of one holding', () => {
@@ -148,7 +178,9 @@ describe('holding keys', () => {
     });
   });
 
-  it('survives a set code that itself contains the separator', () => {
-    expect(parseHoldingKey('A|B|C')).toEqual({ setCode: 'A', rarity: 'B|C' });
+  it('splits into exactly three fields', () => {
+    // Set codes and rarities are letters, digits and spaces, so the separator cannot
+    // occur inside one; anything past the third field is not ours and is dropped.
+    expect(parseHoldingKey('A|B|C')).toEqual({ setCode: 'A', rarity: 'B', language: 'C' });
   });
 });

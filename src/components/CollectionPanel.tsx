@@ -91,7 +91,7 @@ export function CollectionPanel({
         const copies = group.entries.reduce((sum, entry) => sum + entry.count, 0);
         out.push({ kind: 'heading', key: `s:${group.code}`, label: group.name, count: copies });
         for (const entry of group.entries)
-          out.push({ kind: 'row', key: `${group.code}:${entry.rarity ?? ''}:${entry.card.id}`, entry });
+          out.push({ kind: 'row', key: `${group.code}:${entry.rarity ?? ''}:${entry.language ?? ''}:${entry.card.id}`, entry });
       }
     } else if (sort === 'type') {
       for (const group of groupByCategory(shown)) {
@@ -117,7 +117,7 @@ export function CollectionPanel({
 
   /** Scans carry the printing they were read from; typed entries do not. */
   function addScanned(result: ScanResult): string {
-    const key = result.setCode ? holdingKey(result.setCode, result.rarity) : UNKNOWN_SET;
+    const key = result.setCode ? holdingKey(result.setCode, result.rarity, result.language) : UNKNOWN_SET;
     const next = addCopies(collection, result.card.id, key, 1);
     onChange(next);
     const total = next.get(result.card.id)?.total ?? 1;
@@ -195,7 +195,7 @@ export function CollectionPanel({
               addCopies(
                 collection,
                 result.card.id,
-                result.setCode ? holdingKey(result.setCode, result.rarity) : UNKNOWN_SET,
+                result.setCode ? holdingKey(result.setCode, result.rarity, result.language) : UNKNOWN_SET,
                 -1,
               ),
             )
@@ -311,6 +311,8 @@ export function CollectionPanel({
                     <span className="owned-name">
                       {displayName(item.entry.card)}
                       {item.entry.rarity && <span className="muted"> · {item.entry.rarity}</span>}
+                      {/* What a Cardmarket listing turns on, next to the rarity. */}
+                      {item.entry.language && <span className="muted"> · {item.entry.language}</span>}
                       <br />
                       <span className="muted" style={{ fontSize: 12.5 }}>
                         je{' '}

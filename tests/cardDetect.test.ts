@@ -4,6 +4,7 @@ import {
   edgeEnergy,
   frameFromDetection,
   topPeaks,
+  insideSleeve,
   type Grey,
 } from '../src/lib/cardDetect';
 import { pointOnCard, PASSCODE_ANCHOR } from '../src/lib/cardGeometry';
@@ -115,5 +116,31 @@ describe('frameFromDetection', () => {
     expect(at.x).toBeGreaterThan(10);
     expect(at.x).toBeLessThan(20);
     expect(at.y).toBeLessThan(30);
+  });
+});
+
+describe('insideSleeve', () => {
+  const sleeve = { x: 100, y: 100, width: 66, height: 91, sideways: false, score: 1, judged: 4 };
+
+  it('shrinks a sleeve outline to the card inside it', () => {
+    const card = insideSleeve(sleeve);
+    expect(card.width).toBeCloseTo(59, 6);
+    expect(card.height).toBeCloseTo(86, 6);
+  });
+
+  it('puts the card at the bottom, where a sleeve open at the top holds it', () => {
+    const card = insideSleeve(sleeve);
+    // Centred across, and its bottom edge on the sleeve's bottom edge.
+    expect(card.x + card.width / 2).toBeCloseTo(sleeve.x + sleeve.width / 2, 6);
+    expect(card.y + card.height).toBeCloseTo(sleeve.y + sleeve.height, 6);
+  });
+
+  it('keeps the number line inside the card, not below it', () => {
+    // The whole point: addressed against the sleeve, the bottom tenth of the "card"
+    // lands partly under the real card's edge and the number falls outside it.
+    const card = insideSleeve(sleeve);
+    const numberLine = card.y + card.height * 0.94;
+    expect(numberLine).toBeLessThan(sleeve.y + sleeve.height);
+    expect(numberLine).toBeGreaterThan(card.y + card.height * 0.9);
   });
 });

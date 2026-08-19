@@ -33,14 +33,29 @@ export const UNKNOWN_SET = '';
  */
 const RARITY_SEPARATOR = '|';
 
-export function holdingKey(setCode: string, rarity?: string | null): string {
+/**
+ * And a third field for the language: `PHNI|Secret Rare|DE`.
+ *
+ * A German and an English copy of the same card are two different things to sell —
+ * different listing on Cardmarket, different price — so they cannot share a count.
+ * The language is printed in the set code itself (`MAGO-DE009`), so it costs nothing
+ * to read; it only had to stop being thrown away.
+ *
+ * Same rule as the rarity before it: a key with fewer fields means those were never
+ * recorded, so everything saved until now keeps working untouched.
+ */
+export function holdingKey(setCode: string, rarity?: string | null, language?: string | null): string {
+  if (language) return `${setCode}${RARITY_SEPARATOR}${rarity ?? ''}${RARITY_SEPARATOR}${language}`;
   return rarity ? `${setCode}${RARITY_SEPARATOR}${rarity}` : setCode;
 }
 
-export function parseHoldingKey(key: string): { setCode: string; rarity: string | null } {
-  const at = key.indexOf(RARITY_SEPARATOR);
-  if (at === -1) return { setCode: key, rarity: null };
-  return { setCode: key.slice(0, at), rarity: key.slice(at + 1) || null };
+export function parseHoldingKey(key: string): {
+  setCode: string;
+  rarity: string | null;
+  language: string | null;
+} {
+  const [setCode = '', rarity = '', language = ''] = key.split(RARITY_SEPARATOR);
+  return { setCode, rarity: rarity || null, language: language || null };
 }
 
 const STORAGE_KEY = 'ygo-set-finder:collection:v2';
