@@ -477,18 +477,60 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
   // The worker holds a wasm instance; drop it when the scanner closes.
   useEffect(() => () => void ocr.current?.stop(), []);
 
+  /*
+   * The first touch anywhere opens the sound, whatever it was aimed at. Waiting for
+   * the user to find a particular button would mean the first cards of a session are
+   * scanned in silence — and silence is exactly what gets reported as broken.
+   */
+  useEffect(() => {
+    const open = () => {
+      unlockSound();
+      document.removeEventListener('pointerdown', open);
+    };
+    document.addEventListener('pointerdown', open);
+    return () => document.removeEventListener('pointerdown', open);
+  }, []);
+
   /**
    * A short beep, synthesised rather than loaded — no asset, no request, works
    * offline. Working through a stack, you look at the cards and not at the screen,
    * so hearing the hit is worth more than seeing it.
    */
-  function beep() {
+  /**
+   * Opens the sound output, and only ever from a finger on the screen.
+   *
+   * This is why no beep was heard. A browser will not let a page make noise on its
+   * own: an audio context created outside a touch starts suspended, and asking it to
+   * resume outside a touch is ignored. The beep was being built inside the scanning
+   * loop — as far from a touch as it gets — so every note was played into a context
+   * that was never open.
+   *
+   * The silent buffer is the part that actually unlocks it on iOS; creating the
+   * context is not enough there.
+   */
+  function unlockSound(): AudioContext | null {
     try {
       const Ctor = globalThis.AudioContext ?? (globalThis as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!Ctor) return;
+      if (!Ctor) return null;
       audio.current ??= new Ctor();
       const context = audio.current;
       void context.resume();
+      const silent = context.createBufferSource();
+      silent.buffer = context.createBuffer(1, 1, context.sampleRate);
+      silent.connect(context.destination);
+      silent.start();
+      return context;
+    } catch {
+      return null;
+    }
+  }
+
+  function beep() {
+    try {
+      const context = audio.current;
+      // Not opened yet, or opened and then suspended again by the system: either way
+      // there is nothing to play into, and forcing it here would not work anyway.
+      if (!context || context.state !== 'running') return;
       const oscillator = context.createOscillator();
       const gain = context.createGain();
       oscillator.frequency.value = 880;
@@ -1562,7 +1604,21 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
             </button>
             <button onClick={() => setAuto((value) => !value)}>{auto ? 'Auto-Scan aus' : 'Auto-Scan an'}</button>
             {torchAvailable && <button onClick={toggleTorch}>{torch ? 'Licht aus' : 'Licht an'}</button>}
-            <button onClick={() => setSound((value) => !value)}>{sound ? 'Ton aus' : 'Ton an'}</button>
+            <button
+              onClick={() => {
+                const next = !sound;
+                setSound(next);
+                // Proof on the spot: the toggle is a touch, so if it can beep at all,
+                // it beeps now — and if nothing is heard, the phone is on silent.
+                if (next) {
+                  const context = unlockSound();
+                  if (context?.state === 'running') beep();
+                  else setFeedback('Der Browser lässt keinen Ton zu. Auf dem iPhone: Stummschalter am Rand umlegen.');
+                }
+              }}
+            >
+              {sound ? 'Ton aus' : 'Ton an'}
+            </button>
             <button onClick={() => setTurnSeen((value) => TURNS[(TURNS.indexOf(value) + 1) % TURNS.length]!)}>
               {turnSeen === 0 ? 'Karte liegt quer?' : `Quer: ${turnSeen}°`}
             </button>
@@ -1578,6 +1634,7 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
                   `Video: ${video.current?.videoWidth ?? 0}x${video.current?.videoHeight ?? 0}, angefragt ${settings.width ?? '?'}x${settings.height ?? '?'}`,
                   `Bilder geprüft: ${checked}, erfasst: ${counted}`,
                   `Zuletzt gelesen: ${reading ?? '—'}`,
+                  `Ton: ${sound ? 'an' : 'aus'}, Ausgabe ${audio.current?.state ?? 'nicht geöffnet'}`,
                   `Sitzung: Set ${sessionSet ?? '—'}, Rarity ${sessionRarity ?? '—'}, Sprache ${sessionLanguage ?? '—'}`,
                   `Zuletzt erfasst: ${
                     entries[0]
