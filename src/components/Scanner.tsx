@@ -40,7 +40,7 @@ import {
   type Turn,
   type WordBox,
 } from '../lib/scan';
-import { detectCard, frameFromDetection } from '../lib/cardDetect';
+import { detectCard, frameFromDetection, insideSleeve } from '../lib/cardDetect';
 import {
   ART_REGION,
   boundingBoxOnCard,
@@ -134,6 +134,15 @@ interface Props {
  * refused rather than believed.
  */
 const SET_HUNT_MS = 4000;
+
+/**
+ * How many of the shapes a frame might be showing to try in a single tick.
+ *
+ * Four covers the two that matter — the rectangle that was found and the card that
+ * would sit inside it if that rectangle were a sleeve — for a card lying either way
+ * up. Beyond that a tick starts outlasting the card.
+ */
+const AUTO_CANDIDATES = 4;
 
 /** How long to wait between attempts while scanning continuously. */
 const SCAN_INTERVAL_MS = 700;
@@ -833,21 +842,33 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
      * which end is the top, and which way the text runs. Both are cheap to try, so
      * they are tried rather than guessed.
      */
-    const candidates: { card: CardFrame; turn: Turn }[] = spotted
-      ? spotted.sideways
+    /*
+     * Both the rectangle that was found and the card that would sit inside it if that
+     * rectangle were a sleeve.
+     *
+     * The search takes the *outermost* card-shaped rectangle, which is right for a bare
+     * card — the artwork inside it must not win — and wrong for a sleeved one, where the
+     * outermost rectangle is the sleeve. Reported from real use: sleeved cards read
+     * almost not at all. Six millimetres of plastic move everything addressed in card
+     * fractions by about that much of the card's height, and the number's strip is a
+     * tenth of it. Which of the two it is cannot be told from the outline, so both go in.
+     */
+    const shapes = spotted ? [spotted, insideSleeve(spotted)] : [];
+    const candidates: { card: CardFrame; turn: Turn }[] = shapes.flatMap((shape) =>
+      shape.sideways
         ? ([90, 270] as Turn[]).flatMap((turn) =>
             [true, false].map((right) => ({
-              card: frameFromDetection(spotted, grey.width, grey.height, frame.width, frame.height, right),
+              card: frameFromDetection(shape, grey.width, grey.height, frame.width, frame.height, right),
               turn,
             })),
           )
         : [
             {
-              card: frameFromDetection(spotted, grey.width, grey.height, frame.width, frame.height),
+              card: frameFromDetection(shape, grey.width, grey.height, frame.width, frame.height),
               turn: 0 as Turn,
             },
-          ]
-      : [];
+          ],
+    );
     setFound(
       spotted
         ? frameRectOnElement(frame.width, frame.height, frame.elementWidth, frame.elementHeight, {
@@ -874,13 +895,18 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
           ...inverted.map((variant) => ({ variant, turn: held, card: null })),
         ]
       : candidates.length > 0
-        ? [
-            {
-              variant: passVariant(step),
-              turn: candidates[step % candidates.length]!.turn,
-              card: candidates[step % candidates.length]!.card,
-            },
-          ]
+        ? /*
+           * Every shape the picture might be showing, in one tick, rather than one per
+           * tick. The crops are the cheap part and the seven hundred millisecond wait
+           * between ticks is not: with a card and a sleeve to tell apart, taking turns
+           * put a sleeved card at forty-five seconds against five for a bare one. Same
+           * number of recognitions, a quarter of the waiting.
+           */
+          candidates.slice(0, AUTO_CANDIDATES).map(({ card, turn }) => ({
+            variant: passVariant(step),
+            turn,
+            card,
+          }))
         : [{ variant: passVariant(step), turn: held, card: null }];
 
     /*
@@ -1196,21 +1222,23 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
        */
       const grey = frameGrey(frame, 240);
       const spotted = detectCard(grey);
-      const candidates: { card: CardFrame; turn: Turn }[] = spotted
-        ? spotted.sideways
+      // The found rectangle and the card inside it, in case that rectangle is a sleeve.
+      const shapes = spotted ? [spotted, insideSleeve(spotted)] : [];
+      const candidates: { card: CardFrame; turn: Turn }[] = shapes.flatMap((shape) =>
+        shape.sideways
           ? ([90, 270] as Turn[]).flatMap((turn) =>
               [true, false].map((right) => ({
-                card: frameFromDetection(spotted, grey.width, grey.height, frame.width, frame.height, right),
+                card: frameFromDetection(shape, grey.width, grey.height, frame.width, frame.height, right),
                 turn,
               })),
             )
           : [
-              { card: frameFromDetection(spotted, grey.width, grey.height, frame.width, frame.height), turn: 0 as Turn },
+              { card: frameFromDetection(shape, grey.width, grey.height, frame.width, frame.height), turn: 0 as Turn },
               // A card photographed upside down puts its number at the top; one extra
               // look is cheaper than a card that has to be typed in by hand.
-              { card: frameFromDetection(spotted, grey.width, grey.height, frame.width, frame.height), turn: 180 as Turn },
-            ]
-        : [];
+              { card: frameFromDetection(shape, grey.width, grey.height, frame.width, frame.height), turn: 180 as Turn },
+            ],
+      );
 
       const readings: string[] = [];
       /** Why this photo was not booked, if it was not. */
@@ -1474,8 +1502,8 @@ export function Scanner({ db, onCard, onUndo, onSummary, onClose }: Props) {
 
           <p className="muted" style={{ fontSize: 12.5, margin: '8px 0 0' }}>
             {auto
-              ? 'Ganze Karte ins Bild, ruhig halten — der grüne Rahmen zeigt, dass sie gefunden wurde. Für Set und Rarity ist das Foto der sichere Weg: der Set-Code ist im Livebild zu klein.'
-              : 'Ganze Karte ins Bild, dann tippen. Für viele Karten: erst alle abfotografieren, dann „Fotos einlesen" — das liest den ganzen Stapel am Stück.'}
+              ? 'Ganze Karte ins Bild, mit etwas Rand ringsum — die Karte wird an ihren vier Kanten gegen die Unterlage erkannt. Grüner Rahmen = gefunden. Karte nach dem Piep kurz liegen lassen, der Set-Code kommt oft ein, zwei Bilder später.'
+              : 'Ganze Karte ins Bild, mit Rand ringsum, dann tippen. Für viele Karten: erst alle abfotografieren, dann „Fotos einlesen".'}
           </p>
 
           <div className="row">

@@ -292,3 +292,41 @@ export function frameFromDetection(
     ? { origin: { x: x + w, y }, right: { x: 0, y: h }, down: { x: -w, y: 0 } }
     : { origin: { x, y: y + h }, right: { x: 0, y: -h }, down: { x: w, y: 0 } };
 }
+
+/**
+ * A card is 59 x 86 mm; the sleeve around it is 66 x 91. Both are rectangles with a
+ * hard edge, both are close enough to a card's proportions to pass, and the sleeve is
+ * the bigger of the two — which is exactly what the search prefers.
+ *
+ * Reported from real use: sleeved cards read almost not at all. The reason is not the
+ * plastic but those few millimetres. Everything is addressed in card fractions, so
+ * locking onto the sleeve shifts the number's strip by about six percent of the card's
+ * height — and the strip is a tenth of it. The number ends up just outside.
+ *
+ * Which of the two rectangles was found cannot be told from the outline, so both are
+ * tried. A penny sleeve is open at the top and the card sits at its bottom, so the
+ * inset is not centred vertically.
+ */
+export const SLEEVE_WIDTH_SHARE = 59 / 66;
+export const SLEEVE_HEIGHT_SHARE = 86 / 91;
+
+export function insideSleeve(card: DetectedCard): DetectedCard {
+  const width = card.width * SLEEVE_WIDTH_SHARE;
+  const height = card.height * SLEEVE_HEIGHT_SHARE;
+  return card.sideways
+    ? {
+        ...card,
+        // Turned a quarter, the sleeve's opening is at one side rather than the top.
+        x: card.x + (card.width - height) / 2,
+        y: card.y + (card.height - width) / 2,
+        width: card.width * SLEEVE_HEIGHT_SHARE,
+        height: card.height * SLEEVE_WIDTH_SHARE,
+      }
+    : {
+        ...card,
+        x: card.x + (card.width - width) / 2,
+        y: card.y + (card.height - height),
+        width,
+        height,
+      };
+}
